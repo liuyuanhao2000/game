@@ -66,21 +66,14 @@
     return true;
   }
 
-  // 梅花斜路邻接（仅外圈行营↔中心行营，10 条边双向）
-  // 中心行营：上半 (3,2)=idx17，下半 (8,2)=idx42
-  const DIAG_EDGES = (() => {
-    const upperCenter = idx(3, 2);
-    const lowerCenter = idx(8, 2);
-    const edges = [];
-    [[2, 1], [2, 3], [4, 1], [4, 3]].forEach(([r, c]) => edges.push([idx(r, c), upperCenter]));
-    [[7, 1], [7, 3], [9, 1], [9, 3]].forEach(([r, c]) => edges.push([idx(r, c), lowerCenter]));
-    const set = new Set();
-    edges.forEach(([a, b]) => { set.add(a + ':' + b); set.add(b + ':' + a); });
-    return set;
-  })();
-
+  // 行营八方向：行营内的棋子可向 4 个对角方向各走 1 步（叠加 4 正交 = 八方向）。
+  // 对角邻接当且仅当：两格对角相邻（|dr|=1 且 |dc|=1）且至少一端为行营。
   function isDiagAdjacent(a, b) {
-    return DIAG_EDGES.has(a + ':' + b);
+    if (a === b) return false;
+    const [ra, ca] = rc(a);
+    const [rb, cb] = rc(b);
+    if (Math.abs(ra - rb) !== 1 || Math.abs(ca - cb) !== 1) return false; // 非对角相邻
+    return terrain[a] === 'camp' || terrain[b] === 'camp';
   }
 
   // 预计算每个格的正交邻居（仅棋盘内、正交相邻，不含楚河阻断判定——调用方按需用 isAdjacent）
@@ -102,16 +95,15 @@
     return ORTH_NEIGHBORS[i].filter((n) => isAdjacent(i, n));
   }
 
-  // 梅花斜路邻居
+  // 行营对角邻居：仅当本格为行营时，返回 4 个在棋盘内的对角邻居（八方向移动用）
   function diagNeighbors(i) {
-    const out = [];
+    if (terrain[i] !== 'camp') return [];
     const [r, c] = rc(i);
-    // 仅行营有斜边；枚举四角对角格，再用 isDiagAdjacent 过滤
+    const out = [];
     const cands = [[r - 1, c - 1], [r - 1, c + 1], [r + 1, c - 1], [r + 1, c + 1]];
     for (const [rr, cc] of cands) {
       if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS) continue;
-      const j = idx(rr, cc);
-      if (isDiagAdjacent(i, j)) out.push(j);
+      out.push(idx(rr, cc));
     }
     return out;
   }

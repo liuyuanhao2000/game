@@ -37,15 +37,23 @@
     [cx(0), cy(10), cx(4), cy(10)],
   ];
 
-  // 梅花斜路（外圈行营↔中心行营）
+  // 行营八方向斜路：每个行营向其 4 个对角邻居画线（与 diagNeighbors 一致）
   const DIAG_SEGMENTS = (() => {
     const segs = [];
-    const upperCenter = [cx(2), cy(3)];
-    const upperOuter = [[cx(1), cy(2)], [cx(3), cy(2)], [cx(1), cy(4)], [cx(3), cy(4)]];
-    upperOuter.forEach((o) => segs.push([o[0], o[1], upperCenter[0], upperCenter[1]]));
-    const lowerCenter = [cx(2), cy(8)];
-    const lowerOuter = [[cx(1), cy(7)], [cx(3), cy(7)], [cx(1), cy(9)], [cx(3), cy(9)]];
-    lowerOuter.forEach((o) => segs.push([o[0], o[1], lowerCenter[0], lowerCenter[1]]));
+    const seen = new Set();
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const i = B.idx(r, c);
+        if (B.terrainAt(i) !== 'camp') continue;
+        for (const j of B.diagNeighbors(i)) {
+          const key = Math.min(i, j) + ':' + Math.max(i, j);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const [r1, c1] = B.rc(i), [r2, c2] = B.rc(j);
+          segs.push([cx(c1), cy(r1), cx(c2), cy(r2)]);
+        }
+      }
+    }
     return segs;
   })();
 

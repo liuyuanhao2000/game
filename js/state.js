@@ -31,11 +31,13 @@
   function createInitialState() {
     const board = new Array(C.CELL_COUNT);
     for (let i = 0; i < C.CELL_COUNT; i++) board[i] = { piece: null, revealed: false };
-    // 随机选 50 个格子放棋子，其余 10 格留空
-    const slots = shuffle([...Array(C.CELL_COUNT).keys()]);
+    // 随机摆放 50 子；行营格不放棋子（10 个行营格保持空）
+    const nonCampSlots = shuffle(
+      [...Array(C.CELL_COUNT).keys()].filter((i) => B.terrainAt(i) !== 'camp')
+    );
     const pieces = shuffle(buildPieces());
     for (let i = 0; i < pieces.length; i++) {
-      board[slots[i]] = { piece: pieces[i], revealed: false };
+      board[nonCampSlots[i]] = { piece: pieces[i], revealed: false };
     }
     return {
       board,

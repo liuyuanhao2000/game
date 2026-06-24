@@ -199,6 +199,37 @@ test('moves: no diagonal from non-camp cell', () => {
   }
 });
 
+test('moves: camp piece moves 8 directions (4 orth + 4 diag)', () => {
+  const b = emptyBoard();
+  place(b, idx(3,2), 'company', 'red'); // center camp R4C3 (idx17)
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(3,2)));
+  // 4 orth
+  assert.ok(ms.has(idx(2,2))); // up
+  assert.ok(ms.has(idx(4,2))); // down
+  assert.ok(ms.has(idx(3,1))); // left
+  assert.ok(ms.has(idx(3,3))); // right
+  // 4 diag
+  assert.ok(ms.has(idx(2,1))); // up-left (outer camp)
+  assert.ok(ms.has(idx(2,3))); // up-right (outer camp)
+  assert.ok(ms.has(idx(4,1))); // down-left (outer camp)
+  assert.ok(ms.has(idx(4,3))); // down-right (outer camp)
+  assert.strictEqual(ms.size, 8, 'camp piece should have 8 directional moves');
+});
+
+test('moves: outer camp piece gains diagonal moves beyond plum-X', () => {
+  const b = emptyBoard();
+  place(b, idx(2,1), 'company', 'red'); // outer camp R3C2
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(2,1)));
+  // plum-X diagonal to center camp still present
+  assert.ok(ms.has(idx(3,2)));
+  // plus 3 other diagonal directions to non-camp cells
+  assert.ok(ms.has(idx(1,0)), 'up-left to railway');
+  assert.ok(ms.has(idx(1,2)), 'up-right to railway');
+  assert.ok(ms.has(idx(3,0)), 'down-left to railway');
+});
+
 // ============ H. 不可移动 ============
 test('moves: mine and flag immobile', () => {
   const b = emptyBoard();

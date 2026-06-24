@@ -101,4 +101,19 @@ test('state: no legal moves -> opponent wins', () => {
   assert.strictEqual(st.winner, 'red');
 });
 
+test('state: initial placement never puts pieces in camps', () => {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const st = S.createInitialState();
+    let pieces = 0;
+    for (let i = 0; i < st.board.length; i++) {
+      if (B.terrainAt(i) === 'camp') {
+        assert.strictEqual(st.board[i].piece, null, 'camp cell must be empty: idx ' + i);
+      } else {
+        if (st.board[i].piece) pieces++;
+      }
+    }
+    assert.strictEqual(pieces, 50, 'all 50 pieces placed in non-camp cells');
+  }
+});
+
 console.log('state tests loaded');
