@@ -1,4 +1,4 @@
-// 军旗翻翻棋 — UI 渲染与交互
+// 军旗翻翻棋 — UI 渲染与交互（SVG 棋盘，经典军旗布局）
 // 监听 state.onChange 重渲染；把玩家点击转成动作意图提交给 main。
 // 只在 cell.revealed 时显示阵营，未翻子只显示背面。
 ;(function () {
@@ -12,75 +12,201 @@
   const PIECE_NAME = {};
   for (const t in C.PIECES) PIECE_NAME[t] = C.PIECES[t].name;
 
-  let boardEl = null, hudEl = null, statusEl = null;
-  let onSelect = null;          // 回调：用户点击格子的意图（index）
-  let selected = null;          // 当前选中的己方已翻格 index
-  let legalTargets = {};        // 选中格的合法落点 to->true
+  // ---- 几何 ----
+  const CELL = 1, MARGIN = 0.45, RIVER = 1.0, COLS = C.COLS, ROWS = C.ROWS;
+  const W = 2 * MARGIN + COLS * CELL;
+  const H = 2 * MARGIN + ROWS * CELL + RIVER;
+  const cellX = (c) => MARGIN + c * CELL;
+  const cellY = (r) => MARGIN + r * CELL + (r >= 6 ? RIVER : 0);
+  const cx = (c) => cellX(c) + CELL / 2;
+  const cy = (r) => cellY(r) + CELL / 2;
+
+  // 铁路线段端点（用格子中心坐标）
+  const RAIL_SEGMENTS = [
+    // 竖向 C1（col0）行1..10，跨河
+    [cx(0), cy(1), cx(0), cy(10)],
+    // 竖向 C5（col4）行1..10，跨河
+    [cx(4), cy(1), cx(4), cy(10)],
+    // 横向 R2（row1）
+    [cx(0), cy(1), cx(4), cy(1)],
+    // 横向 R6（row5）
+    [cx(0), cy(5), cx(4), cy(5)],
+    // 横向 R7（row6）
+    [cx(0), cy(6), cx(4), cy(6)],
+    // 横向 R11（row10）
+    [cx(0), cy(10), cx(4), cy(10)],
+  ];
+
+  // 梅花斜路（外圈行营↔中心行营）
+  const DIAG_SEGMENTS = (() => {
+    const segs = [];
+    const upperCenter = [cx(2), cy(3)];
+    const upperOuter = [[cx(1), cy(2)], [cx(3), cy(2)], [cx(1), cy(4)], [cx(3), cy(4)]];
+    upperOuter.forEach((o) => segs.push([o[0], o[1], upperCenter[0], upperCenter[1]]));
+    const lowerCenter = [cx(2), cy(8)];
+    const lowerOuter = [[cx(1), cy(7)], [cx(3), cy(7)], [cx(1), cy(9)], [cx(3), cy(9)]];
+    lowerOuter.forEach((o) => segs.push([o[0], o[1], lowerCenter[0], lowerCenter[1]]));
+    return segs;
+  })();
+
+  let svgEl = null, statusEl = null, onSelect = null;
+  let selected = null, legalTargets = {};
+
+  // SVG 元素创建辅助
+  function el(tag, attrs, parent) {
+    const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    if (attrs) for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
 
   function init({ board, hud, status, onSelect: cb }) {
-    boardEl = board; hudEl = hud; statusEl = status; onSelect = cb;
-    renderBoard();
+    statusEl = status; onSelect = cb;
+    // 在容器内创建 <svg>（容器本身可为 div）
+    svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    board.innerHTML = '';
+    board.appendChild(svgEl);
+    // 首次构建静态结构（棋盘骨架）
+    buildSkeleton();
   }
 
-  function renderBoard() {
-    boardEl.innerHTML = '';
-    for (let r = 0; r < C.ROWS; r++) {
-      for (let c = 0; c < C.COLS; c++) {
+  function buildSkeleton() {
+    svgEl.innerHTML = '';
+    svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svgEl.classList.add('board-svg');
+
+    // 棋盘底
+    el('rect', { x: 0, y: 0, width: W, height: H, fill: 'var(--board-bg)' }, svgEl);
+
+    // 河带（楚河汉界）
+    const riverY = cellY(5) + CELL;
+    el('rect', {
+      x: MARGIN, y: riverY, width: COLS * CELL, height: RIVER,
+      fill: 'var(--river-bg)', class: 'river-band',
+    }, svgEl);
+    el('text', {
+      x: cx(1), y: riverY + RIVER / 2, 'text-anchor': 'middle',
+      'dominant-baseline': 'central', class: 'river-text',
+    }, svgEl).textContent = '楚 河';
+    el('text', {
+      x: cx(3), y: riverY + RIVER / 2, 'text-anchor': 'middle',
+      'dominant-baseline': 'central', class: 'river-text',
+    }, svgEl).textContent = '汉 界';
+
+    // 格子底色层（按地形）
+    const cellLayer = el('g', { class: 'cell-layer' }, svgEl);
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
         const i = B.idx(r, c);
-        const cell = document.createElement('div');
-        cell.className = 'cell terrain-' + B.terrainAt(i);
-        cell.dataset.index = i;
-        // 楚河分隔标记
-        if (r === 5 && c === 1) cell.classList.add('river-left');
-        if (r === 5 && c === 3) cell.classList.add('river-right');
-        cell.addEventListener('click', () => onCellClick(i));
-        boardEl.appendChild(cell);
+        const t = B.terrainAt(i);
+        el('rect', {
+          x: cellX(c), y: cellY(r), width: CELL, height: CELL,
+          fill: t === 'camp' ? 'var(--camp-bg)' : (t === 'railway' ? 'var(--rail-bg)' : 'var(--cell-bg)'),
+          stroke: 'var(--grid-line)', 'stroke-width': 0.02, class: 'cell-fill',
+        }, cellLayer);
       }
-      // 行尾换行（用 CSS grid 实际不需要，但保留分隔）
+    }
+
+    // 铁路双轨线
+    const railLayer = el('g', { class: 'rail-layer' }, svgEl);
+    RAIL_SEGMENTS.forEach((s) => drawRail(railLayer, s[0], s[1], s[2], s[3]));
+    // 过河桥 C3（非铁路，细线）
+    el('line', {
+      x1: cx(2), y1: cy(5), x2: cx(2), y2: cy(6),
+      stroke: 'var(--bridge-line)', 'stroke-width': 0.06, 'stroke-dasharray': '0.12 0.08',
+    }, railLayer);
+
+    // 梅花斜路
+    const diagLayer = el('g', { class: 'diag-layer' }, svgEl);
+    DIAG_SEGMENTS.forEach((s) => {
+      el('line', { x1: s[0], y1: s[1], x2: s[2], y2: s[3], stroke: 'var(--diag-line)', 'stroke-width': 0.03 }, diagLayer);
+    });
+
+    // 行营 ⊙ 标记
+    const campLayer = el('g', { class: 'camp-layer' }, svgEl);
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (B.terrainAt(B.idx(r, c)) === 'camp') {
+          el('circle', { cx: cx(c), cy: cy(r), r: CELL * 0.30, fill: 'none', stroke: 'var(--camp-ring)', 'stroke-width': 0.035 }, campLayer);
+          el('circle', { cx: cx(c), cy: cy(r), r: CELL * 0.06, fill: 'var(--camp-ring)' }, campLayer);
+        }
+      }
+    }
+
+    // 高亮层（选中/落点）+ 棋子层 + 点击层
+    el('g', { class: 'hl-layer' }, svgEl);
+    el('g', { class: 'piece-layer' }, svgEl);
+
+    // 透明点击层（每格一个 rect，置于最上）
+    const clickLayer = el('g', { class: 'click-layer' }, svgEl);
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const i = B.idx(r, c);
+        const rct = el('rect', {
+          x: cellX(c), y: cellY(r), width: CELL, height: CELL,
+          fill: 'transparent', 'data-index': i, class: 'click-cell',
+        }, clickLayer);
+        rct.addEventListener('click', () => { if (onSelect) onSelect(i); });
+      }
     }
   }
+
+  // 画一段双轨铁路：两条平行线 + 枕木虚线
+  function drawRail(parent, x1, y1, x2, y2) {
+    // 方向法线
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    const off = 0.06;
+    el('line', { x1: x1 + nx * off, y1: y1 + ny * off, x2: x2 + nx * off, y2: y2 + ny * off, stroke: 'var(--rail-line)', 'stroke-width': 0.035 }, parent);
+    el('line', { x1: x1 - nx * off, y1: y1 - ny * off, x2: x2 - nx * off, y2: y2 - ny * off, stroke: 'var(--rail-line)', 'stroke-width': 0.035 }, parent);
+    el('line', { x1, y1, x2, y2, stroke: 'var(--rail-tie)', 'stroke-width': 0.10, 'stroke-dasharray': '0.10 0.14' }, parent);
+  }
+
+  function layer(name) {
+    return svgEl.querySelector('g.' + name);
+  }
+
+  function clearLayer(g) { while (g.firstChild) g.removeChild(g.firstChild); }
 
   function render(state) {
-    if (!boardEl) return;
-    const cells = boardEl.children;
-    for (let i = 0; i < cells.length; i++) {
-      const el = cells[i];
-      el.className = el.className.replace(/cell-(sel|target|enemy-target|hint)\b/g, '').trim();
-      // 重置 terrain class
-      el.className = 'cell terrain-' + B.terrainAt(i) + ' ' + extraClasses(i).join(' ');
-      el.innerHTML = '';
-      const cell = state.board[i];
-      if (cell.piece) {
-        const p = document.createElement('div');
-        p.className = 'piece';
-        if (cell.revealed) {
-          p.classList.add('side-' + cell.piece.side, 'revealed');
-          p.textContent = PIECE_NAME[cell.piece.type];
-        } else {
-          p.classList.add('back');
-          p.textContent = '军';
-        }
-        el.appendChild(p);
-      }
-    }
-    // 高亮选中与合法落点
-    if (selected !== null) {
-      const sel = cells[selected];
-      if (sel) sel.classList.add('cell-sel');
-      for (const t in legalTargets) {
-        const tel = cells[t];
-        if (!tel) continue;
-        const tcell = state.board[t];
-        if (tcell.piece && tcell.revealed) tel.classList.add('cell-enemy-target');
-        else tel.classList.add('cell-target');
-      }
-    }
-    renderHud(state);
-  }
+    if (!svgEl) return;
 
-  function extraClasses(i) {
-    const out = [];
-    return out;
+    // 高亮层
+    const hl = layer('hl-layer');
+    clearLayer(hl);
+    if (selected !== null) {
+      const [r, c] = B.rc(selected);
+      el('rect', { x: cellX(c), y: cellY(r), width: CELL, height: CELL, fill: 'none', stroke: 'var(--sel-line)', 'stroke-width': 0.09, rx: 0.05 }, hl);
+      for (const t in legalTargets) {
+        const [tr, tc] = B.rc(Number(t));
+        const tcell = state.board[t];
+        const col = (tcell && tcell.piece && tcell.revealed) ? 'var(--enemy-line)' : 'var(--target-line)';
+        el('rect', { x: cellX(tc), y: cellY(tr), width: CELL, height: CELL, fill: 'none', stroke: col, 'stroke-width': 0.08, rx: 0.05 }, hl);
+      }
+    }
+
+    // 棋子层
+    const pl = layer('piece-layer');
+    clearLayer(pl);
+    for (let i = 0; i < state.board.length; i++) {
+      const cell = state.board[i];
+      if (!cell.piece) continue;
+      const [r, c] = B.rc(i);
+      const ccx = cx(c), ccy = cy(r);
+      if (cell.revealed) {
+        const g = el('g', { class: 'piece-g side-' + cell.piece.side }, pl);
+        el('circle', { cx: ccx, cy: ccy, r: CELL * 0.36, fill: 'var(--p-' + cell.piece.side + ')', stroke: 'var(--p-' + cell.piece.side + '-ring)', 'stroke-width': 0.04 }, g);
+        el('text', { x: ccx, y: ccy, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'piece-text side-text-' + cell.piece.side }, g).textContent = PIECE_NAME[cell.piece.type];
+      } else {
+        const g = el('g', { class: 'piece-g back' }, pl);
+        el('circle', { cx: ccx, cy: ccy, r: CELL * 0.36, fill: 'var(--p-back)', stroke: 'var(--p-back-ring)', 'stroke-width': 0.04 }, g);
+        el('text', { x: ccx, y: ccy, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'piece-text back-text' }, g).textContent = '军';
+      }
+    }
+
+    renderHud(state);
   }
 
   function renderHud(state) {
@@ -88,42 +214,31 @@
     if (state.winner) {
       if (state.winner === 'draw') msg = '和局（困局）';
       else {
-        const who = state.winner === state.playerSide ? '你胜' : 'AI 胜';
-        msg = who + '（' + NS_NAME[state.winner] + '方夺旗/对方无路）';
+        const who = state.winner === state.playerSide ? '🎉 你胜' : 'AI 胜';
+        msg = who;
       }
     } else if (!state.sidesAssigned) {
       msg = '点击任意背面棋子翻开，决定你的阵营';
     } else {
       const mine = state.turn === state.playerSide;
-      msg = '你是' + NS_NAME[state.playerSide] + '方 · ' + (mine ? '你的回合' : 'AI 思考中…');
+      const tag = '你是 ' + NS_NAME[state.playerSide] + ' 方';
+      msg = tag + ' · ' + (mine ? '你的回合，选择棋子' : 'AI 思考中…');
     }
     statusEl.textContent = msg;
+    // 染色状态条
+    statusEl.className = 'status' + (state.winner ? ' status-end' : (state.sidesAssigned && state.turn === state.playerSide ? ' status-mine' : ''));
   }
 
-  function onCellClick(i) {
-    if (typeof onSelect !== 'function') return;
-    onSelect(i);
-  }
-
-  // 由 main 调用：设置选中格及其合法落点（高亮），null 清除
   function setSelection(index, targets) {
     selected = index;
     legalTargets = {};
     if (targets) for (const m of targets) legalTargets[m.to] = true;
   }
-
-  function clearSelection() {
-    selected = null;
-    legalTargets = {};
-  }
+  function clearSelection() { selected = null; legalTargets = {}; }
 
   function toast(msg) {
     let t = document.getElementById('jq-toast');
-    if (!t) {
-      t = document.createElement('div');
-      t.id = 'jq-toast';
-      document.body.appendChild(t);
-    }
+    if (!t) { t = document.createElement('div'); t.id = 'jq-toast'; document.body.appendChild(t); }
     t.textContent = msg;
     t.className = 'toast show';
     clearTimeout(t._timer);
