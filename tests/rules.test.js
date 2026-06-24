@@ -33,7 +33,7 @@ function makeState(board, extra = {}) {
   return Object.assign({
     board, rows: 12, cols: 5,
     turn: 'red', playerSide: null, sidesAssigned: false,
-    winner: null, staleCount: 0, history: [],
+    winner: null, staleCount: 0, minesLost: { red: 0, blue: 0 }, history: [],
   }, extra);
 }
 function moveSet(moves) {
@@ -238,6 +238,20 @@ test('moves: mine and flag immobile', () => {
   const st = makeState(b);
   assert.strictEqual(R.legalMoves(st, idx(5,0)).length, 0);
   assert.strictEqual(R.legalMoves(st, idx(5,1)).length, 0);
+});
+
+test('moves: flag protected until 3 enemy mines gone', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'commander', 'red');   // 司令
+  place(b, idx(1,1), 'flag', 'blue');        // 蓝旗已翻
+  // 蓝方仅拔 2 雷 → 不可吃旗
+  let st = makeState(b, { minesLost: { red: 0, blue: 2 } });
+  let ms = moveSet(R.legalMoves(st, idx(1,0)));
+  assert.ok(!ms.has(idx(1,1)), 'flag protected while mines remain');
+  // 拔满 3 雷 → 可吃旗
+  st = makeState(b, { minesLost: { red: 0, blue: 3 } });
+  ms = moveSet(R.legalMoves(st, idx(1,0)));
+  assert.ok(ms.has(idx(1,1)), 'flag attackable once all mines gone');
 });
 
 // ============ I. 阻挡与视线 ============

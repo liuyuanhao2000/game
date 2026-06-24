@@ -141,6 +141,10 @@
     checkBudget();
     let score = 0;
     const enemy = C.opposite(side);
+    // 拔雷进度：拔对方雷=向胜利推进（+），己方雷被拔=己方军旗更暴露（−）
+    if (state.minesLost) {
+      score += (state.minesLost[enemy] - state.minesLost[side]) * 20;
+    }
     const { rem, totalUnrevealed } = remainingDistribution(state);
     for (let i = 0; i < state.board.length; i++) {
       const cell = state.board[i];
@@ -176,6 +180,7 @@
       rows: state.rows, cols: state.cols,
       turn: state.turn, playerSide: state.playerSide, aiSide: state.aiSide,
       sidesAssigned: state.sidesAssigned, winner: state.winner, staleCount: state.staleCount,
+      minesLost: { red: state.minesLost.red, blue: state.minesLost.blue },
       history: state.history.slice(), onChange: null,
     };
   }
@@ -199,9 +204,16 @@
     const fcell = s.board[from], tcell = s.board[to];
     const p = fcell.piece;
     if (tcell.piece) {
-      const res = R.resolveBattle(p, tcell.piece);
+      // 军旗保护（legalMoves 已过滤，此处防御）
+      if (tcell.piece.type === 'flag' && s.minesLost[tcell.piece.side] < C.MINES_PER_SIDE) return;
+      const defender = tcell.piece;
+      const res = R.resolveBattle(p, defender);
       s.board[from] = { piece: null, revealed: false };
       s.board[to] = { piece: res.to ? res.to.piece : null, revealed: res.to ? res.to.revealed : false };
+      if (defender.type === 'mine' &&
+          !(res.to && res.to.piece && res.to.piece.type === 'mine')) {
+        s.minesLost[defender.side] += 1;
+      }
       if (res.flagCaptured) s.winner = p.side;
       s.staleCount = 0;
     } else {

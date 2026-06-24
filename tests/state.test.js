@@ -18,7 +18,7 @@ function emptyBoard() { const b = new Array(60); for (let i=0;i<60;i++) b[i]=emp
 function place(b, i, type, side, revealed=true) { b[i] = { piece: piece(type, side), revealed }; }
 function makeState(board) {
   return { board, rows:12, cols:5, turn:null, playerSide:null, aiSide:null,
-    sidesAssigned:false, winner:null, staleCount:0, history:[], onChange:null };
+    sidesAssigned:false, winner:null, staleCount:0, minesLost:{red:0,blue:0}, history:[], onChange:null };
 }
 
 test('state: first flip assigns sides and passes turn to AI', () => {
@@ -66,15 +66,49 @@ test('state: staleCount 40 -> draw', () => {
   assert.strictEqual(st.winner, 'draw');
 });
 
-test('state: flag capture -> attacker wins', () => {
+test('state: flag capture -> attacker wins (only after 3 mines gone)', () => {
   const b = emptyBoard();
   place(b, idx(1,0), 'commander', 'red');  // 司令 rank9
   place(b, idx(1,1), 'flag', 'blue');       // blue flag revealed
   const st = makeState(b);
   st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  // 蓝方地雷未拔满 → 不可吃旗
+  st.minesLost = { red: 0, blue: 2 };
+  assert.strictEqual(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }), false);
+  assert.strictEqual(st.winner, null);
+  // 拔满 3 颗 → 可吃旗获胜
+  st.minesLost = { red: 0, blue: 3 };
   S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
   assert.strictEqual(st.winner, 'red');
   assert.strictEqual(st.board[idx(1,1)].piece.type, 'commander');
+});
+
+test('state: mine destruction increments minesLost', () => {
+  // 工兵挖雷
+  let b = emptyBoard();
+  place(b, idx(1,0), 'engineer', 'red');
+  place(b, idx(1,1), 'mine', 'blue');
+  let st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.minesLost.blue, 1);
+  // 炸弹炸雷
+  b = emptyBoard();
+  place(b, idx(1,0), 'bomb', 'red');
+  place(b, idx(1,1), 'mine', 'blue');
+  st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.minesLost.blue, 1);
+  // 非工兵撞雷 → 雷留，minesLost 不增
+  b = emptyBoard();
+  place(b, idx(1,0), 'company', 'red');
+  place(b, idx(1,1), 'mine', 'blue');
+  st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.minesLost.blue, 0);
+  assert.strictEqual(st.board[idx(1,1)].piece.type, 'mine');
 });
 
 test('state: same-rank battle both die', () => {

@@ -21,6 +21,7 @@
       board: document.getElementById('board'),
       hud: document.getElementById('hud'),
       status: document.getElementById('status'),
+      mines: document.getElementById('mines'),
       onSelect: onCellClick,
     });
     UI.clearSelection();

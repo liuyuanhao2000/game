@@ -48,6 +48,7 @@
       sidesAssigned: false,
       winner: null,
       staleCount: 0,
+      minesLost: { red: 0, blue: 0 }, // 每方已损失地雷数；拔满 3 才可吃其军旗
       history: [],
       onChange: null,            // 回调
     };
@@ -100,10 +101,19 @@
         if (!tcell.revealed) return false;
         if (tcell.piece.side === p.side) return false;
         if (B.terrainAt(to) === 'camp') return false;
-        const res = R.resolveBattle(p, tcell.piece);
+        // 军旗保护：对方地雷未拔满前不可吃旗
+        if (tcell.piece.type === 'flag' &&
+            state.minesLost[tcell.piece.side] < C.MINES_PER_SIDE) return false;
+        const defender = tcell.piece;
+        const res = R.resolveBattle(p, defender);
         // 落盘
         state.board[from] = { piece: null, revealed: false };
         state.board[to] = { piece: res.to ? res.to.piece : null, revealed: res.to ? res.to.revealed : false };
+        // 地雷被拔除（工兵挖雷或炸弹引爆）则记损失
+        if (defender.type === 'mine' &&
+            !(res.to && res.to.piece && res.to.piece.type === 'mine')) {
+          state.minesLost[defender.side] += 1;
+        }
         if (res.flagCaptured) state.winner = p.side;
         state.staleCount = 0; // 吃子重置
       } else {

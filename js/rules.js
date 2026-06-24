@@ -59,6 +59,11 @@
         if (!tcell.revealed) return; // 未翻不可攻
         if (tcell.piece.side === p.side) return; // 己子阻挡
         if (B.terrainAt(to) === 'camp') return; // 行营免疫
+        // 军旗保护：对方地雷未全部拔掉前，不可攻击其军旗
+        if (tcell.piece.type === 'flag' &&
+            (state.minesLost ? state.minesLost[tcell.piece.side] : 0) < C.MINES_PER_SIDE) {
+          return;
+        }
         // 合法攻击
       } else {
         // 空格：空行营可进、空铁路/普通均可

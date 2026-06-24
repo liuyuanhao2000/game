@@ -82,6 +82,12 @@ body {
 }
 .status-mine { border-left-color: #5fd07a; background: #1e4a3a; }
 .status-end { border-left-color: #ffd166; background: #4a3a1e; font-weight: 600; }
+.mines {
+  margin-top: 6px;
+  font-size: clamp(12px, 3vw, 14px);
+  color: var(--muted);
+  min-height: 1em;
+}
 
 .board-wrap {
   background: var(--panel);

@@ -25,6 +25,7 @@
 
     <div id="hud" class="hud">
       <div id="status" class="status">加载中…</div>
+      <div id="mines" class="mines"></div>
     </div>
 
     <div class="board-wrap">
@@ -40,7 +41,7 @@
           <li>回合内可<b>翻棋</b>或<b>移动</b>一颗已翻己方子；地雷/军旗不可移动。</li>
           <li>大吃小，同级同归于尽；工兵可挖雷，炸弹与任何子同归。</li>
           <li>行营内的子不可被攻击；楚河仅在左(C1)/中(C3)/右(C5)三处可过。</li>
-          <li>吃掉对方军旗或令其无路可走即胜；连续40回合无吃翻判和。</li>
+          <li><b>需先拔掉对方全部 3 颗地雷，才能拔掉其军旗</b>；拔旗即胜。令对方无路可走也胜；连续40回合无吃翻判和。</li>
         </ul>
         <button id="rules-close">关闭</button>
       </div>

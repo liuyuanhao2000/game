@@ -28,6 +28,8 @@
 
   // 每方棋子总数（应为 25）
   const PIECES_PER_SIDE = Object.values(PIECES).reduce((s, p) => s + p.count, 0);
+  // 每方地雷数：需拔掉对方全部地雷后才能吃军旗
+  const MINES_PER_SIDE = PIECES.mine.count;
 
   // 不可移动的棋子类型
   const IMMOBILE = ['mine', 'flag'];
@@ -55,7 +57,7 @@
     platoon: 12,
     engineer: 22, // 含挖雷价值
     bomb: 35,
-    mine: 15,
+    mine: 28, // 战略关键：拔雷才能吃旗，价值抬高
     flag: 1000,
   };
 
@@ -68,7 +70,7 @@
 
   NS.Junqi.constants = {
     ROWS, COLS, CELL_COUNT,
-    PIECES, PIECES_PER_SIDE, IMMOBILE,
+    PIECES, PIECES_PER_SIDE, MINES_PER_SIDE, IMMOBILE,
     DIFFICULTY, STALE_LIMIT,
     RIVER_COLS, RIVER_TOP_ROW, RIVER_BOT_ROW,
     PIECE_VALUE, SIDES, opposite,

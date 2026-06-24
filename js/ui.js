@@ -57,7 +57,7 @@
     return segs;
   })();
 
-  let svgEl = null, statusEl = null, onSelect = null;
+  let svgEl = null, statusEl = null, minesEl = null, onSelect = null;
   let selected = null, legalTargets = {};
 
   // SVG 元素创建辅助
@@ -68,8 +68,8 @@
     return e;
   }
 
-  function init({ board, hud, status, onSelect: cb }) {
-    statusEl = status; onSelect = cb;
+  function init({ board, hud, status, mines, onSelect: cb }) {
+    statusEl = status; minesEl = mines; onSelect = cb;
     // 在容器内创建 <svg>（容器本身可为 div）
     svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     board.innerHTML = '';
@@ -235,6 +235,22 @@
     statusEl.textContent = msg;
     // 染色状态条
     statusEl.className = 'status' + (state.winner ? ' status-end' : (state.sidesAssigned && state.turn === state.playerSide ? ' status-mine' : ''));
+
+    // 地雷拔除进度（拔满 3 才能吃对方军旗）
+    if (minesEl) {
+      if (!state.sidesAssigned || !state.minesLost) {
+        minesEl.textContent = '';
+      } else {
+        const ml = state.minesLost;
+        const myLoss = ml[state.playerSide] || 0;
+        const enLoss = ml[state.aiSide] || 0;
+        const M = C.MINES_PER_SIDE;
+        minesEl.textContent =
+          '敌方军旗解锁：' + enLoss + '/' + M + ' 颗地雷' +
+          (enLoss >= M ? '（可吃旗！）' : '') +
+          '  ·  己方地雷剩余 ' + (M - myLoss) + '/' + M;
+      }
+    }
   }
 
   function setSelection(index, targets) {
