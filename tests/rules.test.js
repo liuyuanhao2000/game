@@ -1,0 +1,293 @@
+// 军旗翻翻棋 — rules 单元测试（Node node:test，零依赖）
+// 运行：node --test tests/rules.test.js
+const { test } = require('node:test');
+const assert = require('node:assert');
+
+// 加载模块（顺序：constants → board → rules）
+require('../js/constants.js');
+require('../js/board.js');
+require('../js/rules.js');
+
+const B = Junqi.board;
+const C = Junqi.constants;
+const R = Junqi.rules;
+const idx = (r, co) => r * 5 + co;
+
+// ---- 测试辅助 ----
+function piece(type, side) {
+  return { type, rank: C.PIECES[type].rank, side };
+}
+function cell(p, revealed) { return { piece: p, revealed: !!revealed }; }
+function emptyCell() { return { piece: null, revealed: false }; }
+// 构造空棋盘（全部空格）
+function emptyBoard() {
+  const board = new Array(60);
+  for (let i = 0; i < 60; i++) board[i] = emptyCell();
+  return board;
+}
+// 在指定格放置已翻子
+function place(board, i, p, side, revealed = true) {
+  board[i] = cell(piece(p, side), revealed);
+}
+function makeState(board, extra = {}) {
+  return Object.assign({
+    board, rows: 12, cols: 5,
+    turn: 'red', playerSide: null, sidesAssigned: false,
+    winner: null, staleCount: 0, history: [],
+  }, extra);
+}
+function moveSet(moves) {
+  return new Set(moves.map((m) => m.to));
+}
+
+// ============ A. 地形 ============
+test('terrain: 10 camps are camp', () => {
+  const camps = [[2,1],[2,3],[3,2],[4,1],[4,3],[7,1],[7,3],[8,2],[9,1],[9,3]];
+  for (const [r,c] of camps) assert.strictEqual(B.terrainAt(idx(r,c)), 'camp');
+});
+test('terrain: R2 all railway, R1/R12 all normal', () => {
+  for (let c=0;c<5;c++){
+    assert.strictEqual(B.terrainAt(idx(1,c)), 'railway');
+    assert.strictEqual(B.terrainAt(idx(0,c)), 'normal');
+    assert.strictEqual(B.terrainAt(idx(11,c)), 'normal');
+  }
+});
+test('terrain: camp overrides railway row (R3C2 is camp not railway)', () => {
+  assert.strictEqual(B.terrainAt(idx(2,1)), 'camp');
+});
+test('terrain: C1 vertical rail does not reach R1', () => {
+  assert.strictEqual(B.terrainAt(idx(0,0)), 'normal');
+});
+
+// ============ B. 楚河邻接 ============
+test('river: C2/C4 blocked across R6-R7', () => {
+  assert.strictEqual(B.isAdjacent(idx(5,1), idx(6,1)), false); // C2
+  assert.strictEqual(B.isAdjacent(idx(5,3), idx(6,3)), false); // C4
+});
+test('river: C1/C3/C5 open across R6-R7', () => {
+  assert.strictEqual(B.isAdjacent(idx(5,0), idx(6,0)), true);  // C1
+  assert.strictEqual(B.isAdjacent(idx(5,2), idx(6,2)), true);  // C3
+  assert.strictEqual(B.isAdjacent(idx(5,4), idx(6,4)), true);  // C5
+});
+test('diag: plum edges', () => {
+  assert.strictEqual(B.isDiagAdjacent(idx(2,1), idx(3,2)), true);
+  assert.strictEqual(B.isDiagAdjacent(idx(2,1), idx(3,1)), false);
+  assert.strictEqual(B.isDiagAdjacent(idx(3,2), idx(4,3)), true);
+});
+
+// ============ C. legalMoves 普通一步 + 楚河 ============
+test('moves: river blocks downward crossing at C2 (R6C2 is railway cell)', () => {
+  const b = emptyBoard();
+  place(b, idx(5,1), 'company', 'red'); // R6C2 (railway row)
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(5,1)));
+  // down across river to R7C2 must be blocked (both 1-step orth and straight scan)
+  assert.ok(!ms.has(idx(6,1)), 'cannot cross river at C2');
+  // horizontal railway moves along R6 still work
+  assert.ok(ms.has(idx(5,0))); // left R6C1
+  assert.ok(ms.has(idx(5,2))); // right R6C3
+});
+test('moves: normal 1-step no river at R5C3 (non-camp interior)', () => {
+  const b = emptyBoard();
+  place(b, idx(4,2), 'company', 'red'); // R5C3 normal interior, not camp
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(4,2)));
+  assert.ok(ms.has(idx(3,2))); // up R4C3
+  assert.ok(ms.has(idx(5,2))); // down R6C3
+  assert.ok(ms.has(idx(4,1))); // left R5C2
+  assert.ok(ms.has(idx(4,3))); // right R5C4
+  assert.strictEqual(ms.size, 4);
+});
+
+// ============ D. 铁路直线多步 ============
+test('moves: railway straight-line scan (旅长 at R2C1)', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'brigade', 'red'); // R2C1
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(1,0)));
+  // right along R2: idx(1,1),(1,2),(1,3),(1,4)
+  assert.ok(ms.has(idx(1,1)));
+  assert.ok(ms.has(idx(1,4)));
+  // down along C1: idx(2,0),(3,0),(4,0),(5,0)
+  assert.ok(ms.has(idx(2,0)));
+  assert.ok(ms.has(idx(5,0)));
+  // up: idx(0,0) is normal (not railway) -> scan stops, but 1-step off-rail to idx(0,0) allowed via step-off?
+  //   idx(0,0) is normal neighbor of idx(1,0): normal 1-step covers it
+  assert.ok(ms.has(idx(0,0)));
+});
+
+// ============ E. 工兵 BFS 转弯 ============
+test('moves: engineer BFS turning, river respected', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'engineer', 'red'); // R2C1
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(1,0)));
+  // R6C2 (idx(5,1)) reachable via rail (turn through network)
+  assert.ok(ms.has(idx(5,1)), 'engineer should reach R6C2 by turning');
+  // R7C1 (idx(6,0)) reachable by crossing river at C1 (open)
+  assert.ok(ms.has(idx(6,0)), 'engineer can cross river at C1');
+  // R7C2 (idx(6,1)) reachable via detour: cross at C1 then walk R7 row
+  // (river only blocks the DIRECT C2 crossing; detour via C1/C3/C5 is intended)
+  assert.ok(ms.has(idx(6,1)), 'engineer reaches R7C2 via C1 detour');
+  // engineer reaches far railway cell R11C5 (idx(10,4))
+  assert.ok(ms.has(idx(10,4)), 'engineer reaches whole connected railway graph');
+});
+
+test('moves: non-engineer straight scan cannot cross river at C2', () => {
+  const b = emptyBoard();
+  place(b, idx(5,1), 'brigade', 'red'); // R6C2 (railway)
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(5,1)));
+  // straight down to R7C2 blocked by river; must detour (non-engineer can't turn)
+  assert.ok(!ms.has(idx(6,1)), 'non-engineer cannot cross river at C2 directly');
+  // but can reach R7C2? no — would need turning through R6C1->R7C1->R7C2 (a turn, not straight)
+  assert.ok(!ms.has(idx(6,1)));
+  // can move along R6 row (straight): R6C1, R6C3, R6C4, R6C5
+  assert.ok(ms.has(idx(5,0)));
+  assert.ok(ms.has(idx(5,4)));
+});
+
+// ============ F. 行营免疫 ============
+test('moves: occupied camp unattackable, empty camp enterable', () => {
+  const b = emptyBoard();
+  place(b, idx(2,0), 'company', 'red');   // R3C1 railway, adjacent to camp R3C2(idx(2,1))
+  // camp occupied by revealed blue
+  place(b, idx(2,1), 'platoon', 'blue');
+  let st = makeState(b);
+  let ms = moveSet(R.legalMoves(st, idx(2,0)));
+  assert.ok(!ms.has(idx(2,1)), 'cannot attack into occupied camp');
+  // camp empty -> enterable
+  b[idx(2,1)] = emptyCell();
+  st = makeState(b);
+  ms = moveSet(R.legalMoves(st, idx(2,0)));
+  assert.ok(ms.has(idx(2,1)), 'can enter empty camp');
+});
+test('moves: piece inside camp can move out', () => {
+  const b = emptyBoard();
+  place(b, idx(2,1), 'company', 'red'); // camp R3C2
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(2,1)));
+  assert.ok(ms.has(idx(2,0))); // out to R3C1
+  assert.ok(ms.has(idx(2,2))); // out to R3C3
+});
+
+// ============ G. 梅花斜路 ============
+test('moves: plum diagonal outer->center empty', () => {
+  const b = emptyBoard();
+  place(b, idx(2,1), 'company', 'red'); // outer camp R3C2
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(2,1)));
+  assert.ok(ms.has(idx(3,2)), 'diagonal to center camp R4C3');
+});
+test('moves: plum diagonal blocked when center camp occupied (camp immunity)', () => {
+  const b = emptyBoard();
+  place(b, idx(2,1), 'company', 'red');
+  place(b, idx(3,2), 'platoon', 'blue'); // center camp occupied
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(2,1)));
+  assert.ok(!ms.has(idx(3,2)), 'cannot diagonal-attack into occupied camp');
+});
+test('moves: no diagonal from non-camp cell', () => {
+  const b = emptyBoard();
+  place(b, idx(2,2), 'company', 'red'); // R3C3 normal
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(2,2)));
+  // no diagonal moves at all (only orth 1-step + railway if applicable)
+  for (const to of ms) {
+    const [r,c] = B.rc(to);
+    assert.ok(Math.abs(r-2)+Math.abs(c-2) === 1 || B.isRailway(to), 'no diagonal from non-camp');
+  }
+});
+
+// ============ H. 不可移动 ============
+test('moves: mine and flag immobile', () => {
+  const b = emptyBoard();
+  place(b, idx(5,0), 'mine', 'red');
+  place(b, idx(5,1), 'flag', 'red');
+  const st = makeState(b);
+  assert.strictEqual(R.legalMoves(st, idx(5,0)).length, 0);
+  assert.strictEqual(R.legalMoves(st, idx(5,1)).length, 0);
+});
+
+// ============ I. 阻挡与视线 ============
+test('moves: own unrevealed piece blocks railway line', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'brigade', 'red');     // R2C1
+  place(b, idx(1,2), 'company', 'red');     // R2C3 own, unrevealed? set revealed true (own)
+  b[idx(1,2)].revealed = true;
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(1,0)));
+  assert.ok(!ms.has(idx(1,2)), 'own piece blocks');
+  assert.ok(!ms.has(idx(1,3)), 'beyond own piece blocked');
+  assert.ok(ms.has(idx(1,1)), 'cell before blocker reachable');
+});
+test('moves: revealed enemy on railway is attack target and blocks beyond', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'brigade', 'red');      // 旅长 rank6
+  place(b, idx(1,2), 'platoon', 'blue');     // 排长 rank2 revealed
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(1,0)));
+  assert.ok(ms.has(idx(1,2)), 'can attack revealed enemy');
+  assert.ok(!ms.has(idx(1,3)), 'cannot go past enemy');
+});
+
+// ============ J. resolveBattle 全分支 ============
+function battle(att, def) { return R.resolveBattle(piece(att,'red'), piece(def,'blue')); }
+
+test('battle: big eats small', () => {
+  const r = battle('commander','general'); // 9 vs 8
+  assert.strictEqual(r.to.piece.type, 'commander');
+  assert.strictEqual(r.from, null);
+  assert.strictEqual(r.flagCaptured, false);
+});
+test('battle: same rank both die', () => {
+  const r = battle('division','division'); // 7 vs 7
+  assert.strictEqual(r.to, null);
+  assert.strictEqual(r.from, null);
+});
+test('battle: engineer defuses mine', () => {
+  const r = battle('engineer','mine');
+  assert.strictEqual(r.to.piece.type, 'engineer');
+  assert.strictEqual(r.flagCaptured, false);
+});
+test('battle: non-engineer hits mine, mine stays', () => {
+  const r = battle('company','mine');
+  assert.strictEqual(r.to.piece.type, 'mine');
+  assert.strictEqual(r.from, null);
+});
+test('battle: bomb vs anything both die', () => {
+  const r = battle('bomb','general');
+  assert.strictEqual(r.to, null);
+  assert.strictEqual(r.from, null);
+});
+test('battle: bomb vs mine both die', () => {
+  const r = battle('bomb','mine');
+  assert.strictEqual(r.to, null);
+  assert.strictEqual(r.from, null);
+});
+test('battle: capture flag', () => {
+  const r = battle('commander','flag');
+  assert.strictEqual(r.to.piece.type, 'commander');
+  assert.strictEqual(r.flagCaptured, true);
+});
+test('battle: smaller attacker dies, defender stays', () => {
+  const r = battle('engineer','commander'); // 1 vs 9
+  assert.strictEqual(r.to.piece.type, 'commander');
+  assert.strictEqual(r.from, null);
+});
+
+// ============ K. hasAnyLegalMove ============
+test('hasAnyLegalMove: unrevealed cell counts as move', () => {
+  const b = emptyBoard();
+  place(b, idx(0,0), 'flag', 'blue');
+  b[idx(0,0)].revealed = false; // unrevealed -> flippable
+  const st = makeState(b, { turn: 'red' });
+  assert.strictEqual(R.hasAnyLegalMove(st, 'red'), true);
+});
+test('hasAnyLegalMove: no pieces -> false', () => {
+  const b = emptyBoard();
+  const st = makeState(b, { turn: 'blue' });
+  assert.strictEqual(R.hasAnyLegalMove(st, 'blue'), false);
+});
+
+console.log('rules tests loaded');

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>军旗翻翻棋</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <h1>军旗翻翻棋</h1>
+      <div class="controls">
+        <label>难度：
+          <select id="difficulty">
+            <option value="easy">简单</option>
+            <option value="medium" selected>普通</option>
+            <option value="hard">困难</option>
+          </select>
+        </label>
+        <button id="restart">重新开局</button>
+        <button id="rules-btn">规则</button>
+      </div>
+    </header>
+
+    <div id="hud" class="hud">
+      <div id="status" class="status">加载中…</div>
+    </div>
+
+    <div class="board-wrap">
+      <div id="board" class="board"></div>
+    </div>
+
+    <div id="rules-modal" class="modal hidden">
+      <div class="modal-content">
+        <h2>规则速览</h2>
+        <ul>
+          <li>5×12 棋盘，含铁路（多步直线/工兵转弯）与行营（安全格）。</li>
+          <li>开局所有棋子背面朝下，<b>翻第一颗决定你的阵营</b>，红方先手。</li>
+          <li>回合内可<b>翻棋</b>或<b>移动</b>一颗已翻己方子；地雷/军旗不可移动。</li>
+          <li>大吃小，同级同归于尽；工兵可挖雷，炸弹与任何子同归。</li>
+          <li>行营内的子不可被攻击；楚河仅在左(C1)/中(C3)/右(C5)三处可过。</li>
+          <li>吃掉对方军旗或令其无路可走即胜；连续40回合无吃翻判和。</li>
+        </ul>
+        <button id="rules-close">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 按依赖顺序加载，全局 Junqi 命名空间，file:// 双击可玩 -->
+  <script src="js/constants.js"></script>
+  <script src="js/board.js"></script>
+  <script src="js/rules.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+  <script>
+    // 控件绑定
+    document.getElementById('difficulty').addEventListener('change', (e) => {
+      Junqi.main.setDifficulty(e.target.value);
+    });
+    document.getElementById('restart').addEventListener('click', () => Junqi.main.reset());
+    const modal = document.getElementById('rules-modal');
+    document.getElementById('rules-btn').addEventListener('click', () => modal.classList.remove('hidden'));
+    document.getElementById('rules-close').addEventListener('click', () => modal.classList.add('hidden'));
+  </script>
+</body>
+</html>

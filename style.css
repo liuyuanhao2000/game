@@ -1,0 +1,126 @@
+/* 军旗翻翻棋 — 样式 */
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #1b2a3a;
+  color: #e8eef5;
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 12px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.topbar h1 { margin: 0; font-size: clamp(18px, 4vw, 24px); }
+.controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.controls select, .controls button {
+  background: #2c4055; color: #e8eef5; border: 1px solid #4a6378;
+  border-radius: 6px; padding: 6px 10px; font-size: 14px; cursor: pointer;
+}
+.controls button:hover { background: #3a536f; }
+
+.hud { margin-bottom: 8px; }
+.status {
+  font-size: clamp(14px, 3.5vw, 17px);
+  padding: 8px 12px;
+  background: #243447;
+  border-radius: 8px;
+  border-left: 4px solid #6ea8d6;
+}
+
+.board-wrap {
+  overflow-x: auto;
+  padding: 8px 0;
+}
+.board {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 3px;
+  width: 100%;
+  max-width: 460px;
+  margin: 0 auto;
+}
+
+.cell {
+  position: relative;
+  aspect-ratio: 1 / 1.05;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(13px, 3.4vw, 18px);
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid #3a4d63;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.terrain-normal { background: #2a3c52; }
+.terrain-railway { background: #34465c; background-image: repeating-linear-gradient(45deg, #3a4f66 0 4px, #34465c 4px 8px); }
+.terrain-camp { background: #3d3a52; }
+.cell.river-left, .cell.river-right { /* 楚河侧标记 */ }
+
+.cell.cell-sel { box-shadow: 0 0 0 3px #ffd166 inset; }
+.cell.cell-target { box-shadow: 0 0 0 3px #6ad07a inset; cursor: pointer; }
+.cell.cell-enemy-target { box-shadow: 0 0 0 3px #ef6b6b inset; cursor: pointer; }
+.cell.cell-hint { box-shadow: 0 0 0 2px #6ea8d6 inset; }
+
+.piece {
+  width: 86%; height: 86%;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  font-size: clamp(12px, 3.2vw, 16px);
+  line-height: 1;
+}
+.piece.back {
+  background: linear-gradient(135deg, #6b4a2b, #8a5e36);
+  color: #f0d9a8;
+  border: 2px solid #b8884a;
+}
+.piece.side-red { background: #c8413a; color: #fff; border: 2px solid #f0a39c; }
+.piece.side-blue { background: #2f6fb0; color: #fff; border: 2px solid #8fb6e0; }
+.piece.revealed { box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
+
+/* 楚河分隔条：在第6行下方插入视觉分隔（用 board 的 ::after 不便，改用 gap 染色靠行营底纹区分） */
+
+/* Toast */
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  background: rgba(20,30,42,0.95); color: #e8eef5;
+  padding: 10px 18px; border-radius: 8px; border: 1px solid #4a6378;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s; font-size: 14px;
+}
+.toast.show { opacity: 1; }
+
+/* Modal */
+.modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center; z-index: 10;
+}
+.modal.hidden { display: none; }
+.modal-content {
+  background: #243447; color: #e8eef5; padding: 20px 24px;
+  border-radius: 12px; max-width: 460px; width: 90%;
+  border: 1px solid #4a6378;
+}
+.modal-content h2 { margin-top: 0; }
+.modal-content ul { padding-left: 18px; line-height: 1.7; }
+.modal-content button {
+  margin-top: 8px; background: #2c4055; color: #e8eef5;
+  border: 1px solid #4a6378; border-radius: 6px; padding: 8px 16px; cursor: pointer;
+}
+
+@media (max-width: 420px) {
+  .board { max-width: 100%; }
+}
