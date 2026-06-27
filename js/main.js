@@ -22,6 +22,7 @@
       hud: document.getElementById('hud'),
       status: document.getElementById('status'),
       mines: document.getElementById('mines'),
+      lastmove: document.getElementById('lastmove'),
       onSelect: onCellClick,
     });
     UI.clearSelection();
@@ -114,7 +115,7 @@
     if (aiTimer) clearTimeout(aiTimer);
     if (state.winner) return;
     if (state.sidesAssigned && state.turn === state.aiSide) {
-      aiTimer = setTimeout(runAI, 250); // 给 UI 一点喘息
+      aiTimer = setTimeout(runAI, 450); // 给 UI 一点喘息，便于看清上一步
     }
   }
 

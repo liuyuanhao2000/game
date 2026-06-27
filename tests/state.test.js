@@ -150,4 +150,51 @@ test('state: initial placement never puts pieces in camps', () => {
   }
 });
 
+test('state: lastMove records flip/move/battle outcomes', () => {
+  // fresh state has no last move
+  assert.strictEqual(S.createInitialState().lastMove, null);
+
+  // flip
+  let b = emptyBoard();
+  place(b, idx(0,0), 'commander', 'red'); b[idx(0,0)].revealed = false;
+  let st = makeState(b);
+  S.applyMove(st, { kind:'flip', index: idx(0,0) });
+  assert.deepStrictEqual(st.lastMove, { kind:'flip', index: idx(0,0), side:'red', type:'commander' });
+
+  // empty move
+  b = emptyBoard();
+  place(b, idx(1,0), 'engineer', 'red');
+  st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.deepStrictEqual(st.lastMove, { kind:'move', from: idx(1,0), to: idx(1,1), side:'red', type:'engineer', battle: null });
+
+  // battle: engineer vs mine -> win
+  b = emptyBoard();
+  place(b, idx(1,0), 'engineer', 'red');
+  place(b, idx(1,1), 'mine', 'blue');
+  st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.lastMove.battle.outcome, 'win');
+
+  // battle: platoon vs mine -> lose
+  b = emptyBoard();
+  place(b, idx(1,0), 'platoon', 'red');
+  place(b, idx(1,1), 'mine', 'blue');
+  st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.lastMove.battle.outcome, 'lose');
+
+  // battle: same rank -> both
+  b = emptyBoard();
+  place(b, idx(1,0), 'company', 'red');
+  place(b, idx(1,1), 'company', 'blue');
+  st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.lastMove.battle.outcome, 'both');
+});
+
 console.log('state tests loaded');

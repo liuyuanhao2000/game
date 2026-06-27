@@ -16,6 +16,9 @@
   --sel-line: #e0a800;        /* 选中 */
   --target-line: #2a9d4a;     /* 可走 */
   --enemy-line: #d6453a;      /* 可攻 */
+  --last-line: #ffd166;       /* 上一步：终点/箭头 */
+  --last-from: #c89a2a;       /* 上一步：起点（虚线） */
+  --last-battle: #ff7a5a;     /* 上一步：交战终点 */
   /* 棋子 */
   --p-red: #c8413a;
   --p-red-ring: #f0a39c;
@@ -88,6 +91,18 @@ body {
   color: var(--muted);
   min-height: 1em;
 }
+.lastmove {
+  margin-top: 6px;
+  font-size: clamp(12px, 3vw, 14px);
+  color: #ffe9b0;
+  min-height: 1em;
+  padding: 6px 12px;
+  background: rgba(255, 209, 102, 0.10);
+  border-left: 3px solid var(--last-line);
+  border-radius: 8px;
+  letter-spacing: 0.5px;
+}
+.lastmove.empty { padding: 0 12px; background: transparent; border-left-color: transparent; }
 
 .board-wrap {
   background: var(--panel);
@@ -111,6 +126,7 @@ body {
 .side-text-red { fill: #fff5f2; }
 .side-text-blue { fill: #f2f7ff; }
 .back-text { fill: #f0d9a8; }
+.last-tag { fill: var(--last-line); font-size: 0.22px; font-weight: 700; }
 
 /* 棋子点击层悬停 */
 .click-cell { cursor: pointer; }

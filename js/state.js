@@ -50,7 +50,8 @@
       staleCount: 0,
       minesLost: { red: 0, blue: 0 }, // 每方已损失地雷数；拔满 3 才可吃其军旗
       history: [],
-      onChange: null,            // 回调
+      lastMove: null,           // 最近一步描述（供 UI 标记/提示），null 表示无
+      onChange: null,           // 回调
     };
   }
 
@@ -83,6 +84,7 @@
       }
       state.staleCount = 0; // 翻棋重置困局计数
       state.history.push(action);
+      state.lastMove = { kind: 'flip', index: action.index, side: cell.piece.side, type: cell.piece.type };
       state.winner = R.checkWinner(state);
       notify(state);
       return true;
@@ -116,11 +118,20 @@
         }
         if (res.flagCaptured) state.winner = p.side;
         state.staleCount = 0; // 吃子重置
+        // 交战结果：win=攻击者胜、lose=攻击者亡、both=同归、flag=夺旗
+        let outcome;
+        if (res.flagCaptured) outcome = 'flag';
+        else if (!res.to || !res.to.piece) outcome = 'both';
+        else if (res.to.piece === p) outcome = 'win';
+        else outcome = 'lose';
+        state.lastMove = { kind: 'move', from, to, side: p.side, type: p.type,
+          battle: { side: defender.side, type: defender.type, outcome } };
       } else {
         // 走到空格
         state.board[to] = { piece: p, revealed: true };
         state.board[from] = { piece: null, revealed: false };
         state.staleCount += 1; // 无吃无翻的走子递增
+        state.lastMove = { kind: 'move', from, to, side: p.side, type: p.type, battle: null };
       }
       state.turn = C.opposite(state.turn);
       state.history.push(action);
