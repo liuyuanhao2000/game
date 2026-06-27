@@ -95,15 +95,17 @@
     return ORTH_NEIGHBORS[i].filter((n) => isAdjacent(i, n));
   }
 
-  // 行营对角邻居：仅当本格为行营时，返回 4 个在棋盘内的对角邻居（八方向移动用）
+  // 行营对角邻居（梅花斜路）：返回与 i 对角相邻且「至少一端为行营」的格子。
+  // 对称：从行营可斜出，从斜路上的非行营格也能斜回行营——与 isDiagAdjacent / 画线一致。
   function diagNeighbors(i) {
-    if (terrain[i] !== 'camp') return [];
     const [r, c] = rc(i);
     const out = [];
     const cands = [[r - 1, c - 1], [r - 1, c + 1], [r + 1, c - 1], [r + 1, c + 1]];
     for (const [rr, cc] of cands) {
       if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS) continue;
-      out.push(idx(rr, cc));
+      const j = idx(rr, cc);
+      // 仅当本格或对角邻居为行营时，才存在梅花斜路（与 isDiagAdjacent 同判）
+      if (terrain[i] === 'camp' || terrain[j] === 'camp') out.push(j);
     }
     return out;
   }

@@ -230,6 +230,37 @@ test('moves: outer camp piece gains diagonal moves beyond plum-X', () => {
   assert.ok(ms.has(idx(3,0)), 'down-left to railway');
 });
 
+test('moves: plum diagonal is reversible (non-camp -> camp)', () => {
+  // 从行营 [2,1] 可斜走左下到 [3,0]（非行营），且能从 [3,0] 斜走回 [2,1]
+  const b1 = emptyBoard();
+  place(b1, idx(2,1), 'company', 'red'); // 行营 R3C2
+  const st1 = makeState(b1);
+  const ms1 = moveSet(R.legalMoves(st1, idx(2,1)));
+  assert.ok(ms1.has(idx(3,0)), 'camp -> down-left non-camp diagonal');
+
+  const b2 = emptyBoard();
+  place(b2, idx(3,0), 'company', 'red'); // 非行营格，但与行营 [2,1] 斜邻
+  const st2 = makeState(b2);
+  const ms2 = moveSet(R.legalMoves(st2, idx(3,0)));
+  assert.ok(ms2.has(idx(2,1)), 'non-camp -> camp diagonal (reversible)');
+
+  // 关键回归：即便 [2,0]（铁路换乘格）被占，斜路仍应直达行营 [2,1]
+  const b3 = emptyBoard();
+  place(b3, idx(3,0), 'company', 'red');
+  place(b3, idx(2,0), 'platoon', 'blue'); // 堵住铁路→[2,1] 的换乘路径
+  const st3 = makeState(b3);
+  const ms3 = moveSet(R.legalMoves(st3, idx(3,0)));
+  assert.ok(ms3.has(idx(2,1)), 'direct diagonal to camp even when rail disembark blocked');
+
+  // 行营外的对角邻居只对「与行营斜邻」的方向有斜路，其它对角方向不应生出斜走
+  // [3,0] 的对角邻居：[2,1](行营)、[4,1](行营) 合法；[2,-1]、[4,-1] 越界
+  for (const to of ms2) {
+    const [r, c] = B.rc(to);
+    const diag = Math.abs(r - 3) === 1 && Math.abs(c) === 1;
+    if (diag) assert.ok(B.terrainAt(to) === 'camp', 'non-camp diagonal only targets camps');
+  }
+});
+
 // ============ H. 不可移动 ============
 test('moves: mine and flag immobile', () => {
   const b = emptyBoard();
