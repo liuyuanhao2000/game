@@ -15,6 +15,8 @@
     const a = attacker, d = defender;
     // 炸弹：任一方为炸弹则同归于尽
     if (a.type === 'bomb' || d.type === 'bomb') {
+      // 炸弹炸军旗：军旗被毁 → 旗方判负（攻击方胜）
+      if (d.type === 'flag') return { from: null, to: null, flagCaptured: true };
       return { from: null, to: null, flagCaptured: false };
     }
     // 防守为地雷（攻击者不会是地雷/军旗，二者不可移动）
@@ -83,13 +85,7 @@
       const reach = isEng ? bfsRailwayReach(state, index) : straightRailwayReach(state, index);
       for (const r of reach) {
         if (r === index) continue;
-        add(r);
-        // 从空铁路格下车到正交非铁路邻居
-        if (!state.board[r].piece) {
-          for (const n of B.orthNeighbors(r)) {
-            if (B.terrainAt(n) !== 'railway') add(n);
-          }
-        }
+        add(r); // 铁路滑行落点。离轨须独立一步：从当前格离轨由上面「正交 1 步」覆盖
       }
     }
 
@@ -174,12 +170,12 @@
   // 返回 null | 'red' | 'blue' | 'draw'（不覆盖已设的旗被吃胜）
   function checkWinner(state) {
     if (state.winner) return state.winner;
-    if (state.staleCount >= C.STALE_LIMIT) return 'draw';
-    // 当前轮到的一方无合法行动 → 对方胜
+    // 当前轮到的一方无合法行动 → 对方胜（优先于和棋：无路可走即负）
     const mover = state.turn;
     if (!hasAnyLegalMove(state, mover)) {
       return C.opposite(mover);
     }
+    if (state.staleCount >= C.STALE_LIMIT) return 'draw';
     return null;
   }
 

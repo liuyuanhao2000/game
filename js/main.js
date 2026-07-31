@@ -105,9 +105,10 @@
   }
 
   function commitAction(action) {
-    STATE.applyMove(state, action);
+    const ok = STATE.applyMove(state, action);
     clearSel();
     UI.render(state);
+    if (!ok) { UI.toast('非法操作，已忽略'); return; } // 防御：状态层拒绝（轮次/可达性）
     scheduleAI();
   }
 

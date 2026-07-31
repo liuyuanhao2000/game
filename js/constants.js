@@ -37,8 +37,10 @@
   // AI 难度枚举
   const DIFFICULTY = { EASY: 'easy', MEDIUM: 'medium', HARD: 'hard' };
 
-  // 困局兜底：连续 STALE_LIMIT 个 ply（单方动作）无吃子且无翻棋则判和
-  const STALE_LIMIT = 40;
+  // 困局兜底：连续 STALE_ROUNDS 回合无吃子且无翻棋则判和
+  // 一回合 = 双方各走一步 = 2 个单方动作(ply)；staleCount 以 ply 计数
+  const STALE_ROUNDS = 40;
+  const STALE_LIMIT = STALE_ROUNDS * 2; // 80 ply = 40 回合
 
   // 楚河：跨 R6↔R7（row 5↔6）允许的列（0-based：C1=0, C3=2, C5=4）
   const RIVER_COLS = [0, 2, 4];
@@ -71,7 +73,7 @@
   NS.Junqi.constants = {
     ROWS, COLS, CELL_COUNT,
     PIECES, PIECES_PER_SIDE, MINES_PER_SIDE, IMMOBILE,
-    DIFFICULTY, STALE_LIMIT,
+    DIFFICULTY, STALE_ROUNDS, STALE_LIMIT,
     RIVER_COLS, RIVER_TOP_ROW, RIVER_BOT_ROW,
     PIECE_VALUE, SIDES, opposite,
   };

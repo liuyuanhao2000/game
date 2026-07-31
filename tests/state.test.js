@@ -55,15 +55,62 @@ test('state: staleCount increments on no-eat move, resets on flip', () => {
   assert.strictEqual(st.staleCount, 1);
 });
 
-test('state: staleCount 40 -> draw', () => {
+test('state: 40 quiet plies is NOT a draw (draw needs 40 rounds = 80 plies)', () => {
   const b = emptyBoard();
   place(b, idx(1,0), 'company', 'red');
-  place(b, idx(1,1), 'company', 'blue'); // opponent has a piece so no-loss
+  place(b, idx(10,4), 'company', 'blue'); // 蓝方远处有一可动子：排除困毙，仅验和棋阈值
   const st = makeState(b);
   st.sidesAssigned = true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
   st.staleCount = 39;
-  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,2) }); // ->40
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }); // 安静一步 ->40 ply
+  assert.notStrictEqual(st.winner, 'draw', '40 单方步 = 20 回合，不应判和');
+});
+
+test('state: 80 quiet plies (40 rounds) -> draw', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'company', 'red');
+  place(b, idx(10,4), 'company', 'blue'); // 蓝方远处有一可动子：排除困毙，仅验和棋阈值
+  const st = makeState(b);
+  st.sidesAssigned = true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  st.staleCount = 79;
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }); // 安静一步 ->80 ply = 40 回合
   assert.strictEqual(st.winner, 'draw');
+});
+
+test('state: bomb destroys flag -> attacker wins (flag owner loses)', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'bomb', 'red');
+  place(b, idx(1,1), 'flag', 'blue');
+  place(b, idx(10,4), 'company', 'blue'); // 蓝方另有一可动子：排除"困毙"干扰，胜只能来自炸旗
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  st.minesLost = { red:0, blue:3 }; // 雷已拔满，允许攻旗
+  const ok = S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(ok, true);
+  assert.strictEqual(st.winner, 'red', '炸弹炸掉军旗 → 旗方(蓝)判负，攻击方(红)胜');
+  assert.strictEqual(st.board[idx(1,1)].piece, null, '炸弹与军旗同归于尽');
+  assert.strictEqual(st.board[idx(1,0)].piece, null);
+});
+
+test('state: applyMove rejects unreachable teleport', () => {
+  const b = emptyBoard();
+  place(b, idx(0,0), 'company', 'red');
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  const ok = S.applyMove(st, { kind:'move', from: idx(0,0), to: idx(11,4) });
+  assert.strictEqual(ok, false, '连长不能瞬移到底角');
+  assert.strictEqual(st.board[idx(0,0)].piece.type, 'company', '局面未被改动');
+  assert.strictEqual(st.turn, 'red', '非法动作不切换回合');
+});
+
+test('state: applyMove rejects moving out of turn', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'company', 'red');
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='blue'; st.playerSide='red'; st.aiSide='blue'; // 轮到蓝
+  const ok = S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }); // 动红子
+  assert.strictEqual(ok, false, '不能动非己方回合的子');
+  assert.strictEqual(st.board[idx(1,0)].piece.type, 'company');
 });
 
 test('state: flag capture -> attacker wins (only after 3 mines gone)', () => {

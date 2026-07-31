@@ -70,7 +70,9 @@
     if (state.winner) return false;
 
     if (action.kind === 'flip') {
-      const cell = state.board[action.index];
+      const i = action.index;
+      if (!Number.isInteger(i) || i < 0 || i >= C.CELL_COUNT) return false;
+      const cell = state.board[i];
       if (!cell.piece || cell.revealed) return false;
       cell.revealed = true;
       // 首次翻棋定阵营
@@ -92,9 +94,17 @@
 
     if (action.kind === 'move') {
       const from = action.from, to = action.to;
+      // 边界/形状校验：越界或非法索引直接拒绝（避免抛错）
+      if (!Number.isInteger(from) || !Number.isInteger(to)) return false;
+      if (from < 0 || from >= C.CELL_COUNT || to < 0 || to >= C.CELL_COUNT) return false;
+      if (from === to) return false;
       const fcell = state.board[from];
       const tcell = state.board[to];
       if (!fcell.piece || !fcell.revealed) return false;
+      // 轮次校验：只能移动轮到方的子
+      if (state.turn && fcell.piece.side !== state.turn) return false;
+      // 可达性校验：to 必须在该子的合法走法内（地形/距离/行营免疫/军旗保护均已含）
+      if (!R.legalMoves(state, from).some((m) => m.to === to)) return false;
       if (C.IMMOBILE.indexOf(fcell.piece.type) !== -1) return false;
       const p = fcell.piece;
 

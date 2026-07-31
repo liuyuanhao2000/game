@@ -351,6 +351,12 @@ test('battle: smaller attacker dies, defender stays', () => {
   assert.strictEqual(r.to.piece.type, 'commander');
   assert.strictEqual(r.from, null);
 });
+test('battle: bomb vs flag destroys flag (flagCaptured) -> flag owner loses', () => {
+  const r = battle('bomb','flag');
+  assert.strictEqual(r.from, null);
+  assert.strictEqual(r.to, null, '炸弹与军旗同归于尽');
+  assert.strictEqual(r.flagCaptured, true, '军旗被炸毁应判旗方负');
+});
 
 // ============ K. hasAnyLegalMove ============
 test('hasAnyLegalMove: unrevealed cell counts as move', () => {
@@ -364,6 +370,31 @@ test('hasAnyLegalMove: no pieces -> false', () => {
   const b = emptyBoard();
   const st = makeState(b, { turn: 'blue' });
   assert.strictEqual(R.hasAnyLegalMove(st, 'blue'), false);
+});
+
+// ============ L. 铁路离轨须独立一步（不得滑行后同步离轨）============
+test('moves: railway slide cannot disembark in the same move', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'brigade', 'red'); // 旅长 R2C1（铁路）
+  const st = makeState(b);
+  const ms = moveSet(R.legalMoves(st, idx(1,0)));
+  // 沿 R2 滑到 R2C4 后再离轨落到 R3C4 行营（idx(2,3)）——应为两步，非法
+  assert.ok(!ms.has(idx(2,3)), 'cannot slide along rail then step off in one move');
+  // 沿 C1 滑到 R6C1 后再离轨落到 R6C2（idx(5,1)，非铁路）——同样非法
+  assert.ok(!ms.has(idx(5,1)), 'no same-move disembark from a reached rail cell');
+  // 但从「当前格」离轨一步仍合法：R1C1（idx(0,0)，普通格）是 (1,0) 的正交邻居
+  assert.ok(ms.has(idx(0,0)), 'stepping off the current rail cell is a normal 1-step move');
+  // 铁路上的滑行落点仍然合法
+  assert.ok(ms.has(idx(1,4)), 'can still slide along the railway');
+});
+
+// ============ M. checkWinner 优先级：无路可走 > 和棋 ============
+test('checkWinner: no-moves loss takes priority over stale-draw', () => {
+  const b = emptyBoard();
+  place(b, idx(5,0), 'mine', 'blue'); // 蓝方仅剩一颗不可动的地雷（已翻）
+  const st = makeState(b, { turn: 'blue', staleCount: C.STALE_LIMIT });
+  // 即使困局计数到顶，蓝方无路可走应判蓝负（红胜），而非和棋
+  assert.strictEqual(R.checkWinner(st), 'red');
 });
 
 console.log('rules tests loaded');
