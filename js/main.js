@@ -4,7 +4,6 @@
   const NS = (typeof window !== 'undefined') ? window : globalThis;
   NS.Junqi = NS.Junqi || {};
   const C = NS.Junqi.constants;
-  const B = NS.Junqi.board;
   const R = NS.Junqi.rules;
   const STATE = NS.Junqi.state;
   const AI = NS.Junqi.ai;
@@ -13,6 +12,9 @@
   let state = null;
   let difficulty = C.DIFFICULTY.MEDIUM;
   let aiTimer = null;
+  // UI 瞬态（选中/落点）不挂在游戏状态上，保持 state 纯粹、可序列化
+  let selIndex = null;
+  let selTargets = null;
 
   function start() {
     state = STATE.createInitialState();
@@ -56,14 +58,19 @@
     if (!isPlayerTurn()) { UI.toast('等待 AI 行动'); return; }
 
     const cell = state.board[i];
+    const hadSel = selIndex !== null;
 
     // 若已选中己方已翻子，且 i 是合法落点 → 移动
-    if (state._sel !== undefined && state._sel !== null) {
-      const targets = state._targets || {};
+    if (hadSel) {
+      const targets = selTargets || {};
       if (targets[i]) {
-        const from = state._sel;
+        commitAction({ kind: 'move', from: selIndex, to: i });
+        return;
+      }
+      // 再次点击已选中的子 → 取消选中
+      if (selIndex === i) {
         clearSel();
-        commitAction({ kind: 'move', from, to: i });
+        UI.render(state);
         return;
       }
     }
@@ -73,13 +80,14 @@
       if (C.IMMOBILE.indexOf(cell.piece.type) !== -1) {
         UI.toast('该棋子（' + C.PIECES[cell.piece.type].name + '）不可移动');
         clearSel();
+        UI.render(state);
         return;
       }
       const moves = R.legalMoves(state, i);
       if (moves.length === 0) { UI.toast('该棋子无合法走法'); clearSel(); UI.render(state); return; }
-      state._sel = i;
-      state._targets = {};
-      for (const m of moves) state._targets[m.to] = true;
+      selIndex = i;
+      selTargets = {};
+      for (const m of moves) selTargets[m.to] = true;
       UI.setSelection(i, moves);
       UI.render(state);
       return;
@@ -87,28 +95,37 @@
 
     // 也可翻棋（即使有子可动也允许）
     if (cell.piece && !cell.revealed) {
-      clearSel();
       commitAction({ kind: 'flip', index: i });
       return;
     }
 
-    // 点空格或敌方未翻/其它 → 清除选中
+    // 有选中时点到「非法目标」（空地 / 不可攻的敌子）→ 格子闪红反馈，而非静默
+    if (hadSel) {
+      const isEnemy = cell.piece && cell.revealed && cell.piece.side !== state.playerSide;
+      if (!cell.piece || isEnemy) UI.flashInvalid(i);
+    }
     clearSel();
     UI.render(state);
   }
 
   function clearSel() {
-    if (!state) return;
-    state._sel = null;
-    state._targets = null;
+    selIndex = null;
+    selTargets = null;
     UI.clearSelection();
   }
 
   function commitAction(action) {
-    const ok = STATE.applyMove(state, action);
+    // 先清选中高亮：applyMove 成功后 onChange 会恰好渲染一次，
+    // 若此处再渲染一次会打断入场动画；提前清掉即可让那一次渲染不带选框。
     clearSel();
-    UI.render(state);
-    if (!ok) { UI.toast('非法操作，已忽略'); return; } // 防御：状态层拒绝（轮次/可达性）
+    const ok = STATE.applyMove(state, action);
+    if (!ok) {
+      // 状态层拒绝（轮次/可达性）：反馈并重绘以清除选框
+      if (action.to != null) UI.flashInvalid(action.to);
+      UI.render(state);
+      UI.toast('非法操作，已忽略');
+      return;
+    }
     scheduleAI();
   }
 
@@ -124,15 +141,11 @@
     if (state.winner) return;
     if (!state.sidesAssigned) return; // AI 不会先行翻棋
     const action = AI.chooseMove(state, difficulty, state.aiSide);
-    if (!action) {
-      // 无合法走法 → 判负（checkWinner 会在 applyMove 中处理，但这里直接判定）
-      state.winner = state.playerSide;
-      UI.render(state);
-      return;
-    }
+    // 理论不可达：若 AI 方无合法走法，上一步 applyMove 的 checkWinner 已判负，
+    // scheduleAI 在 winner 非空时不会调度；此处仅防御性返回。
+    if (!action) return;
     STATE.applyMove(state, action);
-    UI.render(state);
-    // 若 AI 翻棋后仍轮到 AI（不会发生，回合已切换）——无需继续
+    // 渲染由 state.onChange 触发（恰好一次），避免二次渲染打断动画
   }
 
   // 暴露调试接口
@@ -145,9 +158,11 @@
 
 // DOM ready 启动（脚本按序加载，DOMContentLoaded 后所有依赖就绪）
 if (typeof document !== 'undefined') {
+  let bootTries = 0;
   function boot() {
-    if (window.Junqi && Junqi.main) Junqi.main.start();
-    else setTimeout(boot, 50);
+    if (window.Junqi && Junqi.main) { Junqi.main.start(); return; }
+    if (++bootTries > 100) { console.error('[Junqi] 依赖加载失败，无法启动'); return; } // 约 5s 上限，避免无限轮询
+    setTimeout(boot, 50);
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);

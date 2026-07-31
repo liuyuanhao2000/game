@@ -49,20 +49,43 @@
       winner: null,
       staleCount: 0,
       minesLost: { red: 0, blue: 0 }, // 每方已损失地雷数；拔满 3 才可吃其军旗
-      history: [],
+      captured: {},            // 已被吃/移除的子：'type:side' -> 数量（供 AI 剩余分布扣减）
       lastMove: null,           // 最近一步描述（供 UI 标记/提示），null 表示无
       onChange: null,           // 回调
     };
   }
 
-  // 公开视图：未翻格返回 null（不泄露 side），供 UI/AI 使用
-  function publicView(cell) {
-    if (!cell.piece || !cell.revealed) return null;
-    return cell.piece;
-  }
-
   function notify(state) {
     if (typeof state.onChange === 'function') state.onChange(state);
+  }
+
+  function bump(map, k) { map[k] = (map[k] || 0) + 1; }
+
+  // 结算一次交战并落盘（state 与 AI 克隆通用的共享逻辑）。
+  // 返回 { flagCaptured, outcome, defender }。
+  // 前置：from 为已翻可动子、to 为已翻敌子；合法性/轮次由调用方保证。
+  function applyBattle(state, from, to) {
+    const p = state.board[from].piece;
+    const defender = state.board[to].piece;
+    const res = R.resolveBattle(p, defender);
+    // 落盘
+    state.board[from] = { piece: null, revealed: false };
+    state.board[to] = { piece: res.to ? res.to.piece : null, revealed: res.to ? res.to.revealed : false };
+    // 地雷被拔除（工兵挖雷或炸弹引爆）则记损失
+    if (defender.type === 'mine' && !(res.to && res.to.piece && res.to.piece.type === 'mine')) {
+      state.minesLost[defender.side] += 1;
+    }
+    // 记录被移除的子（攻击者阵亡 / 防守者被吃），供 AI 剩余分布扣减
+    state.captured = state.captured || {};
+    if (!(res.to && res.to.piece === p)) bump(state.captured, p.type + ':' + p.side);
+    if (!(res.to && res.to.piece === defender)) bump(state.captured, defender.type + ':' + defender.side);
+    // 交战结果：win=攻击者胜、lose=攻击者亡、both=同归、flag=夺旗
+    let outcome;
+    if (res.flagCaptured) outcome = 'flag';
+    else if (!res.to || !res.to.piece) outcome = 'both';
+    else if (res.to.piece === p) outcome = 'win';
+    else outcome = 'lose';
+    return { flagCaptured: res.flagCaptured, outcome, defender };
   }
 
   // 应用一个动作。返回 true 表示成功应用（即使触发胜负也算成功）。
@@ -85,7 +108,6 @@
         state.turn = C.opposite(state.turn);
       }
       state.staleCount = 0; // 翻棋重置困局计数
-      state.history.push(action);
       state.lastMove = { kind: 'flip', index: action.index, side: cell.piece.side, type: cell.piece.type };
       state.winner = R.checkWinner(state);
       notify(state);
@@ -116,26 +138,11 @@
         // 军旗保护：对方地雷未拔满前不可吃旗
         if (tcell.piece.type === 'flag' &&
             state.minesLost[tcell.piece.side] < C.MINES_PER_SIDE) return false;
-        const defender = tcell.piece;
-        const res = R.resolveBattle(p, defender);
-        // 落盘
-        state.board[from] = { piece: null, revealed: false };
-        state.board[to] = { piece: res.to ? res.to.piece : null, revealed: res.to ? res.to.revealed : false };
-        // 地雷被拔除（工兵挖雷或炸弹引爆）则记损失
-        if (defender.type === 'mine' &&
-            !(res.to && res.to.piece && res.to.piece.type === 'mine')) {
-          state.minesLost[defender.side] += 1;
-        }
-        if (res.flagCaptured) state.winner = p.side;
+        const info = applyBattle(state, from, to);
+        if (info.flagCaptured) state.winner = p.side;
         state.staleCount = 0; // 吃子重置
-        // 交战结果：win=攻击者胜、lose=攻击者亡、both=同归、flag=夺旗
-        let outcome;
-        if (res.flagCaptured) outcome = 'flag';
-        else if (!res.to || !res.to.piece) outcome = 'both';
-        else if (res.to.piece === p) outcome = 'win';
-        else outcome = 'lose';
         state.lastMove = { kind: 'move', from, to, side: p.side, type: p.type,
-          battle: { side: defender.side, type: defender.type, outcome } };
+          battle: { side: info.defender.side, type: info.defender.type, outcome: info.outcome } };
       } else {
         // 走到空格
         state.board[to] = { piece: p, revealed: true };
@@ -144,7 +151,6 @@
         state.lastMove = { kind: 'move', from, to, side: p.side, type: p.type, battle: null };
       }
       state.turn = C.opposite(state.turn);
-      state.history.push(action);
       if (!state.winner) state.winner = R.checkWinner(state);
       notify(state);
       return true;
@@ -153,6 +159,6 @@
   }
 
   NS.Junqi.state = {
-    createInitialState, applyMove, publicView,
+    createInitialState, applyMove, applyBattle,
   };
 })();

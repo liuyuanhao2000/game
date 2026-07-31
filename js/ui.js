@@ -6,7 +6,6 @@
   NS.Junqi = NS.Junqi || {};
   const C = NS.Junqi.constants;
   const B = NS.Junqi.board;
-  const R = NS.Junqi.rules;
 
   const NS_NAME = { red: '红', blue: '蓝' };
   const PIECE_NAME = {};
@@ -17,7 +16,7 @@
   const W = 2 * MARGIN + COLS * CELL;
   const H = 2 * MARGIN + ROWS * CELL + RIVER;
   const cellX = (c) => MARGIN + c * CELL;
-  const cellY = (r) => MARGIN + r * CELL + (r >= 6 ? RIVER : 0);
+  const cellY = (r) => MARGIN + r * CELL + (r >= C.RIVER_BOT_ROW ? RIVER : 0);
   const cx = (c) => cellX(c) + CELL / 2;
   const cy = (r) => cellY(r) + CELL / 2;
 
@@ -59,6 +58,10 @@
 
   let svgEl = null, statusEl = null, minesEl = null, lastmoveEl = null, onSelect = null;
   let selected = null, legalTargets = {};
+  let renderedLastMove = null;   // 已为之播过动画的 lastMove（引用比较，避免重复触发）
+  let gameoverShown = false;     // 当前终局是否已弹出结算浮层
+  let clickCells = [];           // 每格的点击/键盘聚焦 rect（按格索引存放，供 aria-label 更新与方向键导航）
+  const reduceMotion = (typeof matchMedia === 'function') && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // SVG 元素创建辅助
   function el(tag, attrs, parent) {
@@ -68,7 +71,7 @@
     return e;
   }
 
-  function init({ board, hud, status, mines, lastmove, onSelect: cb }) {
+  function init({ board, status, mines, lastmove, onSelect: cb }) {
     statusEl = status; minesEl = mines; lastmoveEl = lastmove; onSelect = cb;
     // 在容器内创建 <svg>（容器本身可为 div）
     svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -82,6 +85,8 @@
     svgEl.innerHTML = '';
     svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
     svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    svgEl.setAttribute('role', 'group');
+    svgEl.setAttribute('aria-label', '军旗棋盘，5 列 12 行');
     svgEl.classList.add('board-svg');
 
     // 箭头标记定义（上一步走子用）
@@ -93,7 +98,7 @@
     el('rect', { x: 0, y: 0, width: W, height: H, fill: 'var(--board-bg)' }, svgEl);
 
     // 河带（楚河汉界）
-    const riverY = cellY(5) + CELL;
+    const riverY = cellY(C.RIVER_TOP_ROW) + CELL;
     el('rect', {
       x: MARGIN, y: riverY, width: COLS * CELL, height: RIVER,
       fill: 'var(--river-bg)', class: 'river-band',
@@ -147,23 +152,61 @@
       }
     }
 
-    // 高亮层（选中/落点）+ 棋子层 + 上一步标记层 + 点击层
+    // 高亮层（选中/落点）+ 棋子层 + 上一步标记层 + 动画层 + 点击层
     el('g', { class: 'hl-layer' }, svgEl);
     el('g', { class: 'piece-layer' }, svgEl);
     el('g', { class: 'last-layer' }, svgEl);
+    el('g', { class: 'fx-layer' }, svgEl); // 瞬时动画元素，播放后自移除（不在 render 中清空）
 
-    // 透明点击层（每格一个 rect，置于最上）
+    // 透明点击层（每格一个 rect，置于最上；可键盘聚焦）
     const clickLayer = el('g', { class: 'click-layer' }, svgEl);
+    clickCells = [];
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const i = B.idx(r, c);
         const rct = el('rect', {
           x: cellX(c), y: cellY(r), width: CELL, height: CELL,
           fill: 'transparent', 'data-index': i, class: 'click-cell',
+          tabindex: 0, role: 'button', 'aria-label': '第' + (r + 1) + '行第' + (c + 1) + '列',
         }, clickLayer);
         rct.addEventListener('click', () => { if (onSelect) onSelect(i); });
+        rct.addEventListener('keydown', (e) => onCellKey(e, i));
+        clickCells[i] = rct;
       }
     }
+  }
+
+  // 键盘操作：Enter/Space 触发；方向键在网格间移动焦点
+  const KEY_DIRS = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+  function onCellKey(e, i) {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      if (onSelect) onSelect(i);
+      return;
+    }
+    const dir = KEY_DIRS[e.key];
+    if (!dir) return;
+    e.preventDefault();
+    const [r0, c0] = B.rc(i);
+    const nr = r0 + dir[0], nc = c0 + dir[1];
+    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
+      const t = clickCells[B.idx(nr, nc)];
+      if (t && t.focus) t.focus();
+    }
+  }
+
+  // 每格无障碍标签：位置 + 地形 + 内容（未翻子不泄露阵营）
+  function cellAriaLabel(state, i) {
+    const [r, c] = B.rc(i);
+    let s = '第' + (r + 1) + '行第' + (c + 1) + '列';
+    const terr = B.terrainAt(i);
+    if (terr === 'camp') s += '行营';
+    else if (terr === 'railway') s += '铁路';
+    const cell = state.board[i];
+    if (!cell.piece) s += '，空';
+    else if (!cell.revealed) s += '，未翻';
+    else s += '，' + NS_NAME[cell.piece.side] + ' ' + PIECE_NAME[cell.piece.type];
+    return s;
   }
 
   // 画一段双轨铁路：两条平行线 + 枕木虚线
@@ -186,6 +229,8 @@
 
   function render(state) {
     if (!svgEl) return;
+    const lmNow = state.lastMove;
+    const isNewLm = lmNow !== renderedLastMove; // 这一步是否刚发生（用于入场动画）
 
     // 高亮层
     const hl = layer('hl-layer');
@@ -196,8 +241,19 @@
       for (const t in legalTargets) {
         const [tr, tc] = B.rc(Number(t));
         const tcell = state.board[t];
-        const col = (tcell && tcell.piece && tcell.revealed) ? 'var(--enemy-line)' : 'var(--target-line)';
-        el('rect', { x: cellX(tc), y: cellY(tr), width: CELL, height: CELL, fill: 'none', stroke: col, 'stroke-width': 0.08, rx: 0.05 }, hl);
+        const isAtk = tcell && tcell.piece && tcell.revealed;
+        const col = isAtk ? 'var(--enemy-line)' : 'var(--target-line)';
+        const x = cellX(tc), y = cellY(tr);
+        el('rect', { x, y, width: CELL, height: CELL, fill: 'none', stroke: col, 'stroke-width': 0.07, rx: 0.05, opacity: 0.9 }, hl);
+        if (isAtk) {
+          // 可攻击：× 形（与颜色无关的形状区分，色弱友好）
+          const m = 0.30;
+          el('line', { x1: x + m, y1: y + m, x2: x + CELL - m, y2: y + CELL - m, stroke: col, 'stroke-width': 0.07, 'stroke-linecap': 'round' }, hl);
+          el('line', { x1: x + CELL - m, y1: y + m, x2: x + m, y2: y + CELL - m, stroke: col, 'stroke-width': 0.07, 'stroke-linecap': 'round' }, hl);
+        } else {
+          // 可走：中心圆点（与颜色无关的形状区分，色弱友好）
+          el('circle', { cx: x + CELL / 2, cy: y + CELL / 2, r: CELL * 0.13, fill: col }, hl);
+        }
       }
     }
 
@@ -209,12 +265,18 @@
       if (!cell.piece) continue;
       const [r, c] = B.rc(i);
       const ccx = cx(c), ccy = cy(r);
+      // 入场动画：刚翻开的子 / 刚移动到位的己方子
+      let anim = '';
+      if (isNewLm && lmNow) {
+        if (lmNow.kind === 'flip' && i === lmNow.index && cell.revealed) anim = ' anim-flip';
+        else if (lmNow.kind === 'move' && i === lmNow.to && cell.revealed && cell.piece.side === lmNow.side) anim = ' anim-arrive';
+      }
       if (cell.revealed) {
-        const g = el('g', { class: 'piece-g side-' + cell.piece.side }, pl);
+        const g = el('g', { class: 'piece-g side-' + cell.piece.side + anim }, pl);
         el('circle', { cx: ccx, cy: ccy, r: CELL * 0.36, fill: 'var(--p-' + cell.piece.side + ')', stroke: 'var(--p-' + cell.piece.side + '-ring)', 'stroke-width': 0.04 }, g);
         el('text', { x: ccx, y: ccy, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'piece-text side-text-' + cell.piece.side }, g).textContent = PIECE_NAME[cell.piece.type];
       } else {
-        const g = el('g', { class: 'piece-g back' }, pl);
+        const g = el('g', { class: 'piece-g back' + anim }, pl);
         el('circle', { cx: ccx, cy: ccy, r: CELL * 0.36, fill: 'var(--p-back)', stroke: 'var(--p-back-ring)', 'stroke-width': 0.04 }, g);
         el('text', { x: ccx, y: ccy, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'piece-text back-text' }, g).textContent = '军';
       }
@@ -241,7 +303,69 @@
       }
     }
 
+    // 更新每格无障碍标签（随局面变化；未翻子只报"未翻"，不泄露阵营）
+    if (clickCells.length) {
+      for (let i = 0; i < state.board.length; i++) clickCells[i].setAttribute('aria-label', cellAriaLabel(state, i));
+    }
+
+    maybeFx(state);
     renderHud(state);
+  }
+
+  // ---- 动画（fx-layer，瞬时元素自移除；尊重 prefers-reduced-motion）----
+  function autodestruct(node, ms) {
+    setTimeout(() => { if (node.parentNode) node.parentNode.removeChild(node); }, ms);
+  }
+  function fxLayer() { return layer('fx-layer'); }
+
+  function maybeFx(state) {
+    const lm = state.lastMove;
+    if (lm === renderedLastMove) return; // 同一步不重复触发（render 可能被多次调用）
+    renderedLastMove = lm;
+    if (!lm || reduceMotion) return;
+    const fx = fxLayer(); if (!fx) return;
+    if (lm.kind === 'flip') fxFlip(fx, lm.index);
+    else if (lm.kind === 'move') (lm.battle ? fxBattle : fxMove)(fx, lm);
+  }
+
+  function fxFlip(fx, i) {
+    const [r, c] = B.rc(i);
+    const ring = el('circle', { cx: cx(c), cy: cy(r), r: CELL * 0.34, fill: 'none', stroke: 'var(--last-line)', 'stroke-width': 0.06, class: 'fx-ring' }, fx);
+    autodestruct(ring, 550);
+  }
+
+  function fxMove(fx, lm) {
+    const [fr, fc] = B.rc(lm.from), [tr, tc] = B.rc(lm.to);
+    const ghost = el('circle', { cx: cx(fc), cy: cy(fr), r: CELL * 0.30, fill: 'var(--p-' + lm.side + ')', class: 'fx-ghost' }, fx);
+    ghost.style.setProperty('--dx', (cx(tc) - cx(fc)) + 'px');
+    ghost.style.setProperty('--dy', (cy(tr) - cy(fr)) + 'px');
+    autodestruct(ghost, 260);
+  }
+
+  function fxBattle(fx, lm) {
+    const [tr, tc] = B.rc(lm.to);
+    const X = cx(tc), Y = cy(tr);
+    const ring = el('circle', { cx: X, cy: Y, r: CELL * 0.30, fill: 'none', stroke: 'var(--last-battle)', 'stroke-width': 0.08, class: 'fx-impact' }, fx);
+    autodestruct(ring, 600);
+    let label = '';
+    if (lm.battle.outcome === 'flag') label = '夺旗！';
+    else if (lm.battle.outcome === 'win') label = '吃 ' + PIECE_NAME[lm.battle.type];
+    else if (lm.battle.outcome === 'both') label = '同归于尽';
+    else if (lm.battle.outcome === 'lose') label = '败';
+    if (label) {
+      const t = el('text', { x: X, y: Y - CELL * 0.5, 'text-anchor': 'middle', class: 'fx-label' }, fx);
+      t.textContent = label;
+      autodestruct(t, 850);
+    }
+  }
+
+  // 非法操作：目标格闪红（反馈，不属装饰性动画，reduce-motion 下仍保留）
+  function flashInvalid(index) {
+    if (!svgEl) return;
+    const [r, c] = B.rc(index);
+    const fx = fxLayer(); if (!fx) return;
+    const rect = el('rect', { x: cellX(c), y: cellY(r), width: CELL, height: CELL, fill: 'var(--enemy-line)', 'fill-opacity': 0.38, rx: 0.05, class: 'fx-invalid' }, fx);
+    autodestruct(rect, 480);
   }
 
   // 上一步走子箭头：从 (x1,y1) 指向 (x2,y2)，终点回缩以免被棋子盖住箭头
@@ -324,6 +448,33 @@
       lastmoveEl.textContent = text ? '上一步：' + text : '';
       lastmoveEl.className = 'lastmove' + (text ? '' : ' empty');
     }
+
+    // 结算浮层：终局后延迟弹出（先让最后一步的动画播完）
+    const go = (typeof document !== 'undefined') && document.getElementById('gameover');
+    if (go) {
+      if (state.winner) {
+        if (!gameoverShown) {
+          gameoverShown = true;
+          const tEl = document.getElementById('gameover-title');
+          const sEl = document.getElementById('gameover-sub');
+          if (state.winner === 'draw') {
+            tEl.textContent = '和局';
+            sEl.textContent = '连续 40 回合无吃子、无翻棋';
+          } else {
+            const win = state.winner === state.playerSide;
+            tEl.textContent = win ? '🎉 你赢了' : 'AI 获胜';
+            const lm = state.lastMove;
+            sEl.textContent = (lm && lm.battle && lm.battle.outcome === 'flag')
+              ? '军旗被拔'
+              : '对方无路可走';
+          }
+          setTimeout(() => { if (state.winner) go.classList.remove('hidden'); }, 700);
+        }
+      } else {
+        gameoverShown = false;
+        go.classList.add('hidden');
+      }
+    }
   }
 
   function setSelection(index, targets) {
@@ -335,7 +486,7 @@
 
   function toast(msg) {
     let t = document.getElementById('jq-toast');
-    if (!t) { t = document.createElement('div'); t.id = 'jq-toast'; document.body.appendChild(t); }
+    if (!t) { t = document.createElement('div'); t.id = 'jq-toast'; t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite'); document.body.appendChild(t); }
     t.textContent = msg;
     t.className = 'toast show';
     clearTimeout(t._timer);
@@ -343,6 +494,6 @@
   }
 
   NS.Junqi.ui = {
-    init, render, setSelection, clearSelection, toast,
+    init, render, setSelection, clearSelection, toast, flashInvalid,
   };
 })();

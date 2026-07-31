@@ -1,0 +1,13 @@
+{
+  "name": "junqi-flip-chess",
+  "version": "1.0.0",
+  "description": "浏览器军旗翻翻棋（暗棋）小游戏：零依赖、零构建，人机对战三档 AI",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/rules.test.js tests/state.test.js tests/ai.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

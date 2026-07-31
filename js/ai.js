@@ -30,6 +30,10 @@
         rem[cell.piece.type + ':' + cell.piece.side] -= 1;
       }
     }
+    // 扣除已被吃/移除的子（它们既不在棋盘、也不是暗子）
+    if (state.captured) {
+      for (const k in state.captured) rem[k] -= state.captured[k];
+    }
     return { rem, totalUnrevealed };
   }
 
@@ -63,7 +67,7 @@
       if (res.to && res.to.piece && res.to.piece.type === p.type) {
         // 攻击者存活
         s += valueOf(d.type);
-      } else if (res.to === null && res.from === null) {
+      } else if (res.to === null) {
         // 同归（或炸弹）
         s += valueOf(d.type) - valueOf(p.type);
       } else {
@@ -90,7 +94,8 @@
     const enemy = C.opposite(side);
     // 临时把 piece 放到 to，扫对方合法走法是否含攻击 to
     const snap = state.board.map((c) => ({ piece: c.piece ? { ...c.piece } : null, revealed: c.revealed }));
-    const tmpState = { board: snap, rows: state.rows, cols: state.cols };
+    const tmpState = { board: snap, rows: state.rows, cols: state.cols,
+      minesLost: state.minesLost, captured: state.captured };
     snap[fromIdx] = { piece: null, revealed: false }; // 源点清空
     snap[to] = { piece: { ...piece }, revealed: true };
     let danger = 0;
@@ -104,7 +109,7 @@
             const res = R.resolveBattle(cell.piece, piece);
             if (res.to && res.to.piece && res.to.piece.side === enemy) {
               danger = Math.max(danger, valueOf(piece.type)); // 我子被吃
-            } else if (res.to === null && res.from === null) {
+            } else if (res.to === null) {
               danger = Math.max(danger, valueOf(piece.type) - valueOf(cell.piece.type));
             }
           }
@@ -128,12 +133,12 @@
   // ---- 困难：有限深度 expectimax + 概率 ----
   const NODE_BUDGET = 4000;
   const TIME_BUDGET_MS = 800;
-  let _nodes = 0, _deadline = 0, _budgetHit = false;
+  let _nodes = 0, _deadline = 0;
 
   function BudgetExceeded() {}
   function checkBudget() {
     _nodes++;
-    if (_nodes > NODE_BUDGET || Date.now() > _deadline) { _budgetHit = true; throw new BudgetExceeded(); }
+    if (_nodes > NODE_BUDGET || Date.now() > _deadline) throw new BudgetExceeded();
   }
 
   // 估值（从 side 视角）
@@ -181,7 +186,8 @@
       turn: state.turn, playerSide: state.playerSide, aiSide: state.aiSide,
       sidesAssigned: state.sidesAssigned, winner: state.winner, staleCount: state.staleCount,
       minesLost: { red: state.minesLost.red, blue: state.minesLost.blue },
-      history: state.history.slice(), onChange: null,
+      captured: Object.assign({}, state.captured || {}),
+      onChange: null,
     };
   }
 
@@ -206,15 +212,8 @@
     if (tcell.piece) {
       // 军旗保护（legalMoves 已过滤，此处防御）
       if (tcell.piece.type === 'flag' && s.minesLost[tcell.piece.side] < C.MINES_PER_SIDE) return;
-      const defender = tcell.piece;
-      const res = R.resolveBattle(p, defender);
-      s.board[from] = { piece: null, revealed: false };
-      s.board[to] = { piece: res.to ? res.to.piece : null, revealed: res.to ? res.to.revealed : false };
-      if (defender.type === 'mine' &&
-          !(res.to && res.to.piece && res.to.piece.type === 'mine')) {
-        s.minesLost[defender.side] += 1;
-      }
-      if (res.flagCaptured) s.winner = p.side;
+      const info = STATE.applyBattle(s, from, to);
+      if (info.flagCaptured) s.winner = p.side;
       s.staleCount = 0;
     } else {
       s.board[to] = { piece: p, revealed: true };
@@ -299,7 +298,7 @@
   }
 
   function chooseHard(state, side) {
-    _nodes = 0; _deadline = Date.now() + TIME_BUDGET_MS; _budgetHit = false;
+    _nodes = 0; _deadline = Date.now() + TIME_BUDGET_MS;
     try {
       const actions = enumerateActions(state, side);
       if (!actions.length) return null;

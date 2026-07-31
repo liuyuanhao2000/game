@@ -18,7 +18,7 @@ function emptyBoard() { const b = new Array(60); for (let i=0;i<60;i++) b[i]=emp
 function place(b, i, type, side, revealed=true) { b[i] = { piece: piece(type, side), revealed }; }
 function makeState(board) {
   return { board, rows:12, cols:5, turn:null, playerSide:null, aiSide:null,
-    sidesAssigned:false, winner:null, staleCount:0, minesLost:{red:0,blue:0}, history:[], onChange:null };
+    sidesAssigned:false, winner:null, staleCount:0, minesLost:{red:0,blue:0}, onChange:null };
 }
 
 test('state: first flip assigns sides and passes turn to AI', () => {
@@ -197,6 +197,51 @@ test('state: initial placement never puts pieces in camps', () => {
   }
 });
 
+test('state: capture records the eaten piece in state.captured', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'commander', 'red');
+  place(b, idx(1,1), 'platoon', 'blue');
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.captured['platoon:blue'], 1, '蓝排长被吃应记 1');
+  assert.strictEqual(st.captured['commander:red'] || 0, 0, '红司令存活不应计入');
+});
+
+test('state: both-die records both captured', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'division', 'red');
+  place(b, idx(1,1), 'division', 'blue');
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.captured['division:red'], 1);
+  assert.strictEqual(st.captured['division:blue'], 1);
+});
+
+test('state: non-engineer hits mine records attacker captured, mine stays', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'company', 'red');
+  place(b, idx(1,1), 'mine', 'blue');
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.captured['company:red'], 1, '撞雷的连长被移除');
+  assert.strictEqual(st.captured['mine:blue'] || 0, 0, '地雷仍在，不计被吃');
+});
+
+test('state: bomb vs flag records both bomb and flag captured', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'bomb', 'red');
+  place(b, idx(1,1), 'flag', 'blue');
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.playerSide='red'; st.aiSide='blue';
+  st.minesLost = { red:0, blue:3 };
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.captured['bomb:red'], 1);
+  assert.strictEqual(st.captured['flag:blue'], 1);
+});
+
 test('state: lastMove records flip/move/battle outcomes', () => {
   // fresh state has no last move
   assert.strictEqual(S.createInitialState().lastMove, null);
@@ -243,5 +288,3 @@ test('state: lastMove records flip/move/battle outcomes', () => {
   S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
   assert.strictEqual(st.lastMove.battle.outcome, 'both');
 });
-
-console.log('state tests loaded');

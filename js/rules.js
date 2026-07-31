@@ -9,38 +9,38 @@
   const C = NS.Junqi.constants;
 
   // ---- 交战结算 ----
-  // 输入攻击者与防守者 piece 对象，返回 { from: cell结果, to: cell结果, flagCaptured: bool }
-  // from = 攻击者原格结果（移动后通常为空），to = 防守者格结果
+  // 输入攻击者与防守者 piece 对象，返回 { to: cell结果, flagCaptured: bool }
+  // to = 防守者格结果：{piece,revealed}=存活方占格，null=两子同归（攻击者原格总是清空）
   function resolveBattle(attacker, defender) {
     const a = attacker, d = defender;
     // 炸弹：任一方为炸弹则同归于尽
     if (a.type === 'bomb' || d.type === 'bomb') {
       // 炸弹炸军旗：军旗被毁 → 旗方判负（攻击方胜）
-      if (d.type === 'flag') return { from: null, to: null, flagCaptured: true };
-      return { from: null, to: null, flagCaptured: false };
+      if (d.type === 'flag') return { to: null, flagCaptured: true };
+      return { to: null, flagCaptured: false };
     }
     // 防守为地雷（攻击者不会是地雷/军旗，二者不可移动）
     if (d.type === 'mine') {
       if (a.type === 'engineer') {
         // 工兵挖雷：工兵存活占格，雷除
-        return { from: null, to: { piece: a, revealed: true }, flagCaptured: false };
+        return { to: { piece: a, revealed: true }, flagCaptured: false };
       }
       // 非工兵撞雷：攻击者死，雷留
-      return { from: null, to: { piece: d, revealed: true }, flagCaptured: false };
+      return { to: { piece: d, revealed: true }, flagCaptured: false };
     }
     // 防守为军旗：攻击者存活占格，旗除 → 胜
     if (d.type === 'flag') {
-      return { from: null, to: { piece: a, revealed: true }, flagCaptured: true };
+      return { to: { piece: a, revealed: true }, flagCaptured: true };
     }
     // 等级比较
     if (a.rank > d.rank) {
-      return { from: null, to: { piece: a, revealed: true }, flagCaptured: false };
+      return { to: { piece: a, revealed: true }, flagCaptured: false };
     }
     if (a.rank < d.rank) {
-      return { from: null, to: { piece: d, revealed: true }, flagCaptured: false };
+      return { to: { piece: d, revealed: true }, flagCaptured: false };
     }
     // 同级同归
-    return { from: null, to: null, flagCaptured: false };
+    return { to: null, flagCaptured: false };
   }
 
   // ---- 合法走法生成 ----

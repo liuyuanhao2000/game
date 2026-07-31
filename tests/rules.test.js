@@ -33,7 +33,7 @@ function makeState(board, extra = {}) {
   return Object.assign({
     board, rows: 12, cols: 5,
     turn: 'red', playerSide: null, sidesAssigned: false,
-    winner: null, staleCount: 0, minesLost: { red: 0, blue: 0 }, history: [],
+    winner: null, staleCount: 0, minesLost: { red: 0, blue: 0 },
   }, extra);
 }
 function moveSet(moves) {
@@ -140,8 +140,6 @@ test('moves: non-engineer straight scan cannot cross river at C2', () => {
   const ms = moveSet(R.legalMoves(st, idx(5,1)));
   // straight down to R7C2 blocked by river; must detour (non-engineer can't turn)
   assert.ok(!ms.has(idx(6,1)), 'non-engineer cannot cross river at C2 directly');
-  // but can reach R7C2? no — would need turning through R6C1->R7C1->R7C2 (a turn, not straight)
-  assert.ok(!ms.has(idx(6,1)));
   // can move along R6 row (straight): R6C1, R6C3, R6C4, R6C5
   assert.ok(ms.has(idx(5,0)));
   assert.ok(ms.has(idx(5,4)));
@@ -313,13 +311,11 @@ function battle(att, def) { return R.resolveBattle(piece(att,'red'), piece(def,'
 test('battle: big eats small', () => {
   const r = battle('commander','general'); // 9 vs 8
   assert.strictEqual(r.to.piece.type, 'commander');
-  assert.strictEqual(r.from, null);
   assert.strictEqual(r.flagCaptured, false);
 });
 test('battle: same rank both die', () => {
   const r = battle('division','division'); // 7 vs 7
   assert.strictEqual(r.to, null);
-  assert.strictEqual(r.from, null);
 });
 test('battle: engineer defuses mine', () => {
   const r = battle('engineer','mine');
@@ -329,17 +325,14 @@ test('battle: engineer defuses mine', () => {
 test('battle: non-engineer hits mine, mine stays', () => {
   const r = battle('company','mine');
   assert.strictEqual(r.to.piece.type, 'mine');
-  assert.strictEqual(r.from, null);
 });
 test('battle: bomb vs anything both die', () => {
   const r = battle('bomb','general');
   assert.strictEqual(r.to, null);
-  assert.strictEqual(r.from, null);
 });
 test('battle: bomb vs mine both die', () => {
   const r = battle('bomb','mine');
   assert.strictEqual(r.to, null);
-  assert.strictEqual(r.from, null);
 });
 test('battle: capture flag', () => {
   const r = battle('commander','flag');
@@ -349,11 +342,9 @@ test('battle: capture flag', () => {
 test('battle: smaller attacker dies, defender stays', () => {
   const r = battle('engineer','commander'); // 1 vs 9
   assert.strictEqual(r.to.piece.type, 'commander');
-  assert.strictEqual(r.from, null);
 });
 test('battle: bomb vs flag destroys flag (flagCaptured) -> flag owner loses', () => {
   const r = battle('bomb','flag');
-  assert.strictEqual(r.from, null);
   assert.strictEqual(r.to, null, '炸弹与军旗同归于尽');
   assert.strictEqual(r.flagCaptured, true, '军旗被炸毁应判旗方负');
 });
@@ -396,5 +387,3 @@ test('checkWinner: no-moves loss takes priority over stale-draw', () => {
   // 即使困局计数到顶，蓝方无路可走应判蓝负（红胜），而非和棋
   assert.strictEqual(R.checkWinner(st), 'red');
 });
-
-console.log('rules tests loaded');

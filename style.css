@@ -73,7 +73,12 @@ body {
   padding: 7px 12px; font-size: 14px; cursor: pointer;
   transition: background 0.15s;
 }
-.controls button:hover, .controls select:hover { background: #2d5a7d; }
+.controls select, .controls button { touch-action: manipulation; }
+.controls button.armed { background: #8a3a34; border-color: #c05a50; font-weight: 700; }
+@media (hover: hover) {
+  .controls button:hover, .controls select:hover { background: #2d5a7d; }
+  .controls button.armed:hover { background: #9c463f; }
+}
 
 .status {
   font-size: clamp(14px, 3.6vw, 16px);
@@ -128,9 +133,12 @@ body {
 .back-text { fill: #f0d9a8; }
 .last-tag { fill: var(--last-line); font-size: 0.22px; font-weight: 700; }
 
-/* 棋子点击层悬停 */
-.click-cell { cursor: pointer; }
-.click-cell:hover { fill: rgba(255,255,255,0.12); }
+/* 棋子点击层：仅精确指针设备显示悬停（避免触屏"粘滞"）；禁用双击缩放延迟 */
+.click-cell { cursor: pointer; touch-action: manipulation; outline: none; }
+.click-cell:focus { fill: rgba(110,168,214,0.28); stroke: var(--accent); stroke-width: 0.06; }
+@media (hover: hover) {
+  .click-cell:hover { fill: rgba(255,255,255,0.12); }
+}
 
 /* Toast */
 .toast {
@@ -160,6 +168,75 @@ body {
   border: 1px solid #3a6286; border-radius: 8px; padding: 8px 18px; cursor: pointer;
 }
 .modal-content button:hover { background: #2d5a7d; }
+
+/* ---- 交互动画（全部尊重 prefers-reduced-motion）---- */
+.piece-g, .fx-ring, .fx-impact, .fx-ghost { transform-box: fill-box; transform-origin: center; }
+.fx-ring, .fx-impact, .fx-ghost, .fx-label, .fx-invalid { pointer-events: none; }
+.fx-ghost { opacity: 0.5; }
+.fx-label {
+  fill: #fff; font-size: 0.30px; font-weight: 800; letter-spacing: 0.02px;
+  paint-order: stroke; stroke: rgba(0,0,0,0.55); stroke-width: 0.06px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .anim-flip { animation: flip-in 0.38s cubic-bezier(.2,.8,.3,1.15); }
+  .anim-arrive { animation: arrive 0.30s cubic-bezier(.2,.8,.3,1.2); }
+  .fx-ring { animation: fx-pop 0.5s ease-out forwards; }
+  .fx-impact { animation: fx-pop 0.55s ease-out forwards; }
+  .fx-ghost { animation: fx-slide 0.22s ease-out forwards; }
+  .fx-label { animation: fx-rise 0.8s ease-out forwards; }
+  .fx-invalid { animation: fx-flash 0.45s ease-out forwards; }
+  .gameover { animation: go-fade 0.25s ease-out; }
+}
+@keyframes flip-in {
+  0% { transform: scaleX(0.08) scaleY(0.6); opacity: 0.2; }
+  60% { transform: scaleX(1.12) scaleY(1.04); opacity: 1; }
+  100% { transform: scaleX(1) scaleY(1); }
+}
+@keyframes arrive {
+  0% { transform: scale(1.35); opacity: 0.35; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes fx-pop {
+  0% { transform: scale(0.6); opacity: 0.9; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+@keyframes fx-slide { to { transform: translate(var(--dx,0), var(--dy,0)); opacity: 0; } }
+@keyframes fx-rise {
+  0% { transform: translateY(0.18px); opacity: 0; }
+  25% { opacity: 1; }
+  100% { transform: translateY(-0.30px); opacity: 0; }
+}
+@keyframes fx-flash { 0% { fill-opacity: 0.45; } 100% { fill-opacity: 0; } }
+@keyframes go-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---- 结算浮层 ---- */
+.gameover {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(6,16,26,0.72);
+}
+.gameover.hidden { display: none; }
+.gameover-card {
+  background: linear-gradient(180deg, #23486b, #1b3a57);
+  border: 1px solid #3f6f9a; border-radius: 16px;
+  padding: 28px 34px 24px; text-align: center;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+  min-width: min(320px, 86vw);
+}
+.gameover-title { font-size: 30px; font-weight: 800; letter-spacing: 2px; color: #ffd9a0; }
+.gameover-sub { margin-top: 8px; color: var(--muted); font-size: 14px; letter-spacing: 1px; }
+.gameover-actions { margin-top: 22px; display: flex; gap: 12px; justify-content: center; }
+.gameover-actions button {
+  border-radius: 10px; padding: 10px 22px; font-size: 15px; cursor: pointer;
+  border: 1px solid #3f6f9a; background: var(--panel-2); color: var(--ink);
+  touch-action: manipulation;
+}
+.gameover-actions .btn-primary { background: #d6893a; border-color: #e8a85c; color: #20180c; font-weight: 700; }
+.gameover-actions button:active { transform: scale(0.96); }
+@media (hover: hover) {
+  .gameover-actions button:hover { background: #2d5a7d; }
+  .gameover-actions .btn-primary:hover { background: #e89a4a; }
+}
 
 @media (max-width: 380px) {
   .app { padding: 10px 8px 24px; }

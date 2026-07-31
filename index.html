@@ -24,7 +24,7 @@
     </header>
 
     <div id="hud" class="hud">
-      <div id="status" class="status">加载中…</div>
+      <div id="status" class="status" role="status" aria-live="polite">加载中…</div>
       <div id="mines" class="mines"></div>
       <div id="lastmove" class="lastmove empty"></div>
     </div>
@@ -33,18 +33,32 @@
       <div id="board" class="board"></div>
     </div>
 
-    <div id="rules-modal" class="modal hidden">
+    <div id="rules-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="rules-title">
       <div class="modal-content">
-        <h2>规则速览</h2>
+        <h2 id="rules-title">规则速览</h2>
         <ul>
           <li>5×12 棋盘，含铁路（多步直线/工兵转弯）与行营（安全格）。</li>
-          <li>开局所有棋子背面朝下，<b>翻第一颗决定你的阵营</b>，红方先手。</li>
+          <li>开局所有棋子背面朝下，<b>你永远先翻第一颗棋子，翻出的颜色决定你的阵营</b>（翻到蓝色则 AI 先行移动）。</li>
           <li>回合内可<b>翻棋</b>或<b>移动</b>一颗已翻己方子；地雷/军旗不可移动。</li>
-          <li>大吃小，同级同归于尽；工兵可挖雷，炸弹与任何子同归。</li>
-          <li>行营内的子不可被攻击；楚河仅在左(C1)/中(C3)/右(C5)三处可过。</li>
-          <li><b>需先拔掉对方全部 3 颗地雷，才能拔掉其军旗</b>；拔旗即胜。令对方无路可走也胜；连续40回合无吃翻判和。</li>
+          <li>大吃小，同级同归于尽；工兵可挖雷，炸弹与任何子同归；<b>炸弹炸掉军旗 → 旗方判负</b>。</li>
+          <li>行营内的子不可被攻击，且可向 <b>8 个方向</b>移动（含斜走，斜路仅限与行营斜相邻的方向）。</li>
+          <li>铁路上可直线滑行多步（工兵可转弯），但<b>离轨须独立下一步</b>，不能同步滑行后离轨。</li>
+          <li>楚河仅在左(C1)/中(C3)/右(C5)三处可过。</li>
+          <li><b>需先拔掉对方全部 3 颗地雷，才能攻击其军旗</b>；吃旗或炸旗即胜。令对方无路可走也胜（优先于和棋）；连续 40 回合无吃翻判和。</li>
         </ul>
         <button id="rules-close">关闭</button>
+      </div>
+    </div>
+
+    <!-- 结算浮层（终局后延迟弹出）-->
+    <div id="gameover" class="gameover hidden" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
+      <div class="gameover-card">
+        <div class="gameover-title" id="gameover-title">对局结束</div>
+        <div class="gameover-sub" id="gameover-sub"></div>
+        <div class="gameover-actions">
+          <button id="gameover-again" class="btn-primary">再来一局</button>
+          <button id="gameover-view">回顾棋盘</button>
+        </div>
       </div>
     </div>
   </div>
@@ -62,10 +76,46 @@
     document.getElementById('difficulty').addEventListener('change', (e) => {
       Junqi.main.setDifficulty(e.target.value);
     });
-    document.getElementById('restart').addEventListener('click', () => Junqi.main.reset());
+
+    // 重新开局：二次点击确认，防误触
+    const restartBtn = document.getElementById('restart');
+    let armTimer = null;
+    const disarmRestart = () => {
+      restartBtn.dataset.armed = '';
+      restartBtn.classList.remove('armed');
+      restartBtn.textContent = '重新开局';
+      clearTimeout(armTimer);
+    };
+    restartBtn.addEventListener('click', () => {
+      if (restartBtn.dataset.armed === '1') { disarmRestart(); Junqi.main.reset(); }
+      else {
+        restartBtn.dataset.armed = '1';
+        restartBtn.classList.add('armed');
+        restartBtn.textContent = '确认重开？';
+        armTimer = setTimeout(disarmRestart, 2500);
+      }
+    });
+
+    // 规则弹窗：Esc / 点击遮罩关闭 + 焦点管理与还原
     const modal = document.getElementById('rules-modal');
-    document.getElementById('rules-btn').addEventListener('click', () => modal.classList.remove('hidden'));
-    document.getElementById('rules-close').addEventListener('click', () => modal.classList.add('hidden'));
+    const rulesBtn = document.getElementById('rules-btn');
+    const closeBtn = document.getElementById('rules-close');
+    let lastFocus = null;
+    const openModal = () => { lastFocus = document.activeElement; modal.classList.remove('hidden'); closeBtn.focus(); };
+    const closeModal = () => { modal.classList.add('hidden'); if (lastFocus && lastFocus.focus) lastFocus.focus(); };
+    rulesBtn.addEventListener('click', openModal);
+    closeBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+    });
+
+    // 结算浮层按钮
+    const go = document.getElementById('gameover');
+    document.getElementById('gameover-again').addEventListener('click', () => {
+      go.classList.add('hidden'); disarmRestart(); Junqi.main.reset();
+    });
+    document.getElementById('gameover-view').addEventListener('click', () => go.classList.add('hidden'));
   </script>
 </body>
 </html>
