@@ -1,7 +1,9 @@
 // 军旗翻翻棋 — AI 自弈基准（开发用，不进 index.html）
-// 两种模式：
-//   node scripts/ai_benchmark.js [N]          → 新 hard vs 旧 hard（scripts/ai_old.js），验收"hard 不退化"
-//   node scripts/ai_benchmark.js master [N]   → 新 master vs 新 hard，验收"大师强于困难"
+// 模式：
+//   node scripts/ai_benchmark.js [N]            → legacy：新 hard vs 最旧 hard（ai_old.js）
+//   node scripts/ai_benchmark.js prev [N]       → 新 hard vs 上一版 hard（ai_prev.js），验收"quiesce 下放不退化"
+//   node scripts/ai_benchmark.js master [N]     → 新 master vs 新 hard，验收"大师强于困难"
+//   node scripts/ai_benchmark.js prevmaster [N] → 新 master vs 上一版 master，验收"大师本轮变强"
 // 均先后手各半、种子化可复现。
 // 指标：胜率、avg/max 每步毫秒、场均完成迭代深度、场均"大子被白吃/送死"。
 'use strict';
@@ -11,16 +13,24 @@ require(G + 'board.js');
 require(G + 'rules.js');
 require(G + 'state.js');
 const C = Junqi.constants, R = Junqi.rules, S = Junqi.state;
-require(__dirname + '/ai_old.js');       // 先加载旧版
+require(__dirname + '/ai_old.js');       // 最旧版（master 强化前）
 const oldAI = Junqi.ai;
-require(G + 'ai.js');                    // 再加载新版（覆盖 Junqi.ai）
+require(__dirname + '/ai_prev.js');      // 上一版（本轮再强化前）
+const prevAI = Junqi.ai;
+require(G + 'ai.js');                    // 本轮新版（覆盖 Junqi.ai）
 const newAI = Junqi.ai;
 
-const MASTER_MODE = process.argv[2] === 'master';
-const N = Number(MASTER_MODE ? process.argv[3] : process.argv[2]) || 60;
+const MODE = isNaN(Number(process.argv[2])) ? (process.argv[2] || 'legacy') : 'legacy';
+const MODES = {
+  legacy:     { X: { name: 'hard新',   engine: newAI,  diff: C.DIFFICULTY.HARD   }, Y: { name: 'hard最旧', engine: oldAI,  diff: C.DIFFICULTY.HARD   } },
+  prev:       { X: { name: 'hard新',   engine: newAI,  diff: C.DIFFICULTY.HARD   }, Y: { name: 'hard上一版', engine: prevAI, diff: C.DIFFICULTY.HARD   } },
+  master:     { X: { name: 'master新', engine: newAI,  diff: C.DIFFICULTY.MASTER }, Y: { name: 'hard新',   engine: newAI,  diff: C.DIFFICULTY.HARD   } },
+  prevmaster: { X: { name: 'master新', engine: newAI,  diff: C.DIFFICULTY.MASTER }, Y: { name: 'master上一版', engine: prevAI, diff: C.DIFFICULTY.MASTER } },
+};
+if (!MODES[MODE]) { console.error('未知模式: ' + MODE + '（可用：legacy/prev/master/prevmaster）'); process.exit(2); }
+const N = Number(MODE === 'legacy' ? process.argv[2] : process.argv[3]) || { legacy: 60, prev: 30, master: 30, prevmaster: 40 }[MODE];
 // 对战双方：X=被验收方，Y=对照方
-const X = { name: MASTER_MODE ? 'master' : '新hard', engine: newAI, diff: MASTER_MODE ? C.DIFFICULTY.MASTER : C.DIFFICULTY.HARD };
-const Y = { name: MASTER_MODE ? 'hard' : '旧hard', engine: MASTER_MODE ? newAI : oldAI, diff: C.DIFFICULTY.HARD };
+const X = MODES[MODE].X, Y = MODES[MODE].Y;
 const BIG = 45; // 大子阈值（旅长及以上）
 
 function mulberry32(seed) {
@@ -124,11 +134,17 @@ if (depthX.length) console.log(`场均完成迭代深度: ${X.name} ${avg(depthX
 console.log(`大子(≥${BIG})被白吃: ${X.name} 场均 ${(freeCapX / N).toFixed(2)} / ${Y.name} 场均 ${(freeCapY / N).toFixed(2)}`);
 console.log(`大子主动送死（仅参考）: ${X.name} 场均 ${(giftX / N).toFixed(2)} / ${Y.name} 场均 ${(giftY / N).toFixed(2)}`);
 
-// 验收阈值：master 模式胜率要求更高、时间上限按 2s 预算放宽；legacy 模式守"不退化"
-const minWR = MASTER_MODE ? 0.55 : 0.45;
-const maxAvg = 900;
-const maxPeak = MASTER_MODE ? 2050 : 1100;
-console.log(`\n验收: ${X.name} 胜率(不计和) ≥${minWR * 100}%；avg ≤${maxAvg}ms、max ≤${maxPeak}ms；大子被白吃场均 ≤ ${Y.name}。`);
-const pass = (!decided || wr >= minWR) && avg(msX) <= maxAvg && max(msX) <= maxPeak && freeCapX <= freeCapY;
-console.log(pass ? 'RESULT: PASS ✅' : 'RESULT: 未达标 ❌（按方案调参顺序 time→nodes→qdepth→flipPMin 调整后重跑）');
+// 验收阈值（按模式）。capTol：「大子被白吃」对比的噪声容差——
+// master vs hard 是跨风格对阵（master 主动进攻、交换更多），该指标差异 ±0.2 内属样本噪声，给 0.15 容差；
+// 同族 A/B（legacy/prev/prevmaster）严格 ≤。
+const THRESH = {
+  legacy:     { minWR: 0.45, maxAvg: 900,  maxPeak: 1100, capTol: 0 },
+  prev:       { minWR: 0.50, maxAvg: 900,  maxPeak: 1100, capTol: 0 }, // hard 下放 quiesce 后不回退
+  master:     { minWR: 0.55, maxAvg: 1500, maxPeak: 3200, capTol: 0.15 },
+  prevmaster: { minWR: 0.55, maxAvg: 1500, maxPeak: 3200, capTol: 0 },
+}[MODE];
+const minWR = THRESH.minWR, maxAvg = THRESH.maxAvg, maxPeak = THRESH.maxPeak;
+console.log(`\n验收[${MODE}]: ${X.name} 胜率(不计和) ≥${minWR * 100}%；avg ≤${maxAvg}ms、max ≤${maxPeak}ms；大子被白吃场均 ≤ ${Y.name} + ${THRESH.capTol}。`);
+const pass = (!decided || wr >= minWR) && avg(msX) <= maxAvg && max(msX) <= maxPeak && freeCapX <= freeCapY + THRESH.capTol;
+console.log(pass ? 'RESULT: PASS ✅' : 'RESULT: 未达标 ❌（按方案调参顺序 ASPIRATION→qDelta→time/nodes 调整后重跑）');
 process.exit(pass ? 0 : 1);

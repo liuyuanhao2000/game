@@ -321,16 +321,20 @@ test('ai: quiesce sees recapture that evaluate misses (whitebox A)', () => {
   assert.ok(AI.quiesce(d, 'blue', -Infinity, Infinity, 4) > -50, 'quiesce 应拒绝诱吃');
 });
 
-test('ai: master avoids bait capture at depth 1, hard preset takes it (behavior B)', () => {
+test('ai: quiesce sees recapture at depth 1 (behavior B: 关 quiesce 对照组贪吃，两档均避开)', () => {
   const st = emptyState('blue');
   place(st, 0, 1, 'company', 'blue');
   place(st, 0, 2, 'platoon', 'red');
   place(st, 0, 3, 'battalion', 'red');
-  // hard 预置 maxDepth=1：裸 evaluate 叶子 → 贪吃排长
+  // 对照组：显式关 quiesce → 裸 evaluate 叶子看不出反吃 → 贪吃排长
+  const noQ = AI.chooseHard(st, 'blue', Object.assign({}, AI.PRESETS.hard, { maxDepth: 1, quiesce: false }));
+  assert.ok(noQ && noQ.kind === 'move' && noQ.to === idx(0, 2),
+    '无 quiesce(maxDepth=1) 应贪吃排长，got ' + JSON.stringify(noQ));
+  // hard（quiesce 已开）→ 避开诱吃
   const hardA = AI.chooseHard(st, 'blue', Object.assign({}, AI.PRESETS.hard, { maxDepth: 1 }));
-  assert.ok(hardA && hardA.kind === 'move' && hardA.to === idx(0, 2),
-    'hard(maxDepth=1) 应贪吃排长，got ' + JSON.stringify(hardA));
-  // master 预置 maxDepth=1：quiesce 在叶子看出反吃 → 避开诱吃
+  assert.ok(hardA && hardA.kind === 'move' && hardA.from === idx(0, 1) && hardA.to !== idx(0, 2),
+    'hard 带 quiesce 应避开诱吃，got ' + JSON.stringify(hardA));
+  // master → 避开诱吃
   const masterA = AI.chooseHard(st, 'blue', Object.assign({}, AI.PRESETS.master, { maxDepth: 1 }));
   assert.ok(masterA && masterA.kind === 'move' && masterA.from === idx(0, 1) && masterA.to !== idx(0, 2),
     'master(maxDepth=1) 应避开诱吃，got ' + JSON.stringify(masterA));

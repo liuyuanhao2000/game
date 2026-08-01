@@ -190,13 +190,11 @@
   // ---- 困难/大师：有限深度 expectimax + 概率 ----
   // 难度预置：master = 更深预算 + 叶子静态交换搜索(quiescence) + 翻棋采样加宽
   const PRESETS = {
-    hard:   { time: 800,  nodes: 4000,  maxDepth: 8,  flipK: 3, flipPMin: 0,    quiesce: true, qdepth: 4, qDelta: 20 },
-    master: { time: 3000, nodes: 20000, maxDepth: 12, flipK: 5, flipPMin: 0.06, quiesce: true, qdepth: 4, qDelta: 20 },
+    hard:   { time: 800,  nodes: 4000,  maxDepth: 8,  flipK: 3, flipPMin: 0,    quiesce: false, qdepth: 4, qDelta: 15 },
+    master: { time: 2000, nodes: 12000, maxDepth: 10, flipK: 5, flipPMin: 0.06, quiesce: true,  qdepth: 4, qDelta: 15 },
   };
-  const ASPIRATION = 40; // 迭代加深 aspiration 半宽（围绕上轮值开窗，失败则全窗口重搜）
   let _cfg = PRESETS.hard; // 当前搜索配置（chooseHard 入口设置，finally 复位为 hard 语义）
   let _nodes = 0, _deadline = 0, _lastDepth = 0; // _lastDepth：最近一次搜索完成的迭代深度（观测用）
-  let _killers = [];       // killer moves：按剩余深度索引，每层 ≤2 个触发截断的安静走法
 
   function BudgetExceeded() {}
   function checkBudget() {
@@ -364,8 +362,7 @@
 
   // ---- 走法排序（提升剪枝效率与预算内深度完成度）----
   // threat 非空=根节点精确排序（含逃离桶）；null=深节点廉价静态排序（禁止跑 threatMapOf，否则每节点 ×25 扫爆预算）
-  // killers：本层记录的截断走法，命中者排在吃子/逃离之后、flip/安静走法之前
-  function actionKey(state, side, action, threat, killers) {
+  function actionKey(state, side, action, threat) {
     if (action.kind === 'flip') return 50000;
     const from = action.from, to = action.to;
     const p = state.board[from].piece;
@@ -384,18 +381,16 @@
       const d = dangerAt(threat, from);
       if (d > 0) return 150000 + d + (B.terrainAt(to) === 'camp' ? 1000 : 0);
     }
-    // killer 命中：仅次于吃子/逃离
-    if (killers && killers.some((k) => k.from === from && k.to === to)) return 90000;
     let k = 10000;
     if (B.terrainAt(to) === 'camp') k += 2;
     else if (B.terrainAt(to) === 'railway') k += 1;
     return k;
   }
 
-  function orderActions(state, side, actions, threat, killers) {
+  function orderActions(state, side, actions, threat) {
     if (actions.length < 2) return actions;
     return actions
-      .map((a) => ({ a, k: actionKey(state, side, a, threat, killers) }))
+      .map((a) => ({ a, k: actionKey(state, side, a, threat) }))
       .sort((x, y) => y.k - x.k)
       .map((x) => x.a);
   }
@@ -478,21 +473,20 @@
       return (_cfg.quiesce && !inChance) ? quiesce(state, side, alpha, beta, _cfg.qdepth) : evaluate(state, side);
     }
 
-    const actions = orderActions(state, state.turn, enumerateActions(state, state.turn), null, _killers[depth]);
+    const actions = orderActions(state, state.turn, enumerateActions(state, state.turn), null);
     if (!actions.length) {
       return state.turn === side ? -100000 : 100000; // 无棋可走=负
     }
 
     const mover = state.turn;
     let best;
-    let cutoff = null; // 触发截断的走法 → 候选 killer
     if (mover === side) {
       best = -Infinity;
       for (const a of actions) {
         const v = actionValue(state, a, side, depth, alpha, beta, inChance);
         if (v > best) best = v;
         if (best > alpha) alpha = best;
-        if (alpha >= beta) { cutoff = a; break; } // 剪枝
+        if (alpha >= beta) break; // 剪枝
       }
     } else {
       best = Infinity;
@@ -500,11 +494,9 @@
         const v = actionValue(state, a, side, depth, alpha, beta, inChance);
         if (v < best) best = v;
         if (best < beta) beta = best;
-        if (alpha >= beta) { cutoff = a; break; } // 剪枝
+        if (alpha >= beta) break; // 剪枝
       }
     }
-    // 安静走法触发截断 → 记 killer（吃子已有 MVV-LVA，无需）
-    if (cutoff && cutoff.kind === 'move' && !state.board[cutoff.to].piece) recordKiller(depth, cutoff);
     return best;
   }
 
@@ -554,31 +546,9 @@
     return exp;
   }
 
-  // 根搜索：按窗口评估根走法（兄弟间窗口 (max(bestV,alpha), beta)，fail-high 截断剩余）
-  function searchRoot(state, side, actions, depth, alpha, beta) {
-    let best = null, bestV = -Infinity;
-    const scores = [];
-    for (const a of actions) {
-      const v = actionValue(state, a, side, depth, bestV > alpha ? bestV : alpha, beta);
-      scores.push({ a, v });
-      if (v > bestV) { bestV = v; best = a; }
-      if (bestV >= beta) break; // fail-high：剩余根着截断（外层按失败重搜规则修正）
-    }
-    return { best, bestV, scores };
-  }
-
-  // 记录 killer：触发截断的安静走法（吃子已有 MVV-LVA 排序，不需要）
-  function recordKiller(depth, move) {
-    const slot = (_killers[depth] = _killers[depth] || []);
-    if (slot.some((k) => k.from === move.from && k.to === move.to)) return;
-    slot.unshift({ from: move.from, to: move.to });
-    if (slot.length > 2) slot.length = 2;
-  }
-
   function chooseHard(state, side, cfg = PRESETS.hard) {
     _cfg = cfg;
     _nodes = 0; _deadline = Date.now() + cfg.time; _lastDepth = 0;
-    _killers = [];
     try {
       const actions = enumerateActions(state, side);
       if (!actions.length) return null;
@@ -586,26 +556,21 @@
       let ordered = orderActions(state, side, actions, threat); // 根节点精确排序
       let bestSoFar = ordered[0]; // 兜底＝静态最优着：任何情况下都有确定走法，不再回退 medium
       let lastIterMs = 0;
-      let lastBest = null; // 上一迭代根值 → aspiration 窗口中心
       for (let depth = 1; depth <= cfg.maxDepth; depth++) {
         // 软停：预计本层跑不完剩余时间就不开新深度
         if (lastIterMs > 0 && Date.now() + lastIterMs * 3 > _deadline) break;
         const t0 = Date.now();
-        // aspiration：首轮全窗口；其后围绕上轮值 ±ASPIRATION 开窗，失败则全窗口重搜
-        const full = lastBest === null;
-        const alpha0 = full ? -Infinity : lastBest - ASPIRATION;
-        const beta0 = full ? Infinity : lastBest + ASPIRATION;
+        let best = null, bestV = -Infinity;
+        const scores = [];
         try {
-          let res = searchRoot(state, side, ordered, depth, alpha0, beta0);
-          if (!full && (res.bestV <= alpha0 || res.bestV >= beta0)) {
-            // 窗口失败：有预算则全窗口重搜；否则本层不提交、结束迭代
-            if (Date.now() + 50 >= _deadline) break;
-            res = searchRoot(state, side, ordered, depth, -Infinity, Infinity);
+          for (const a of ordered) {
+            const v = actionValue(state, a, side, depth, bestV, Infinity); // 根窗口：(当前最优, +∞)
+            scores.push({ a, v });
+            if (v > bestV) { bestV = v; best = a; }
           }
-          bestSoFar = res.best; // ★ 只有完整跑完（或重搜完成）的深度才提交
+          bestSoFar = best; // ★ 只有完整跑完的深度才提交
           _lastDepth = depth;
-          lastBest = res.bestV;
-          ordered = res.scores.sort((x, y) => y.v - x.v).map((x) => x.a); // best-first 喂下一层
+          ordered = scores.sort((x, y) => y.v - x.v).map((x) => x.a); // best-first 喂下一层
           lastIterMs = Date.now() - t0;
         } catch (e) {
           if (e instanceof BudgetExceeded) return bestSoFar; // ★ 半途中断 → 返回上一层最优根着
