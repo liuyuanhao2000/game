@@ -37,6 +37,8 @@
   function start() {
     state = STATE.createInitialState();
     state.onChange = () => UI.render(state);
+    const vEl = document.getElementById('version');
+    if (vEl) vEl.textContent = 'v' + C.VERSION; // 版本号唯一来源：constants.VERSION
     UI.init({
       board: document.getElementById('board'),
       hud: document.getElementById('hud'),

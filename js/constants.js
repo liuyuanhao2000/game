@@ -5,6 +5,8 @@
   const NS = (typeof window !== 'undefined') ? window : globalThis;
   NS.Junqi = NS.Junqi || {};
 
+  const VERSION = '1.0.0'; // 与 package.json 保持一致；界面版本号由此渲染
+
   const ROWS = 12;
   const COLS = 5;
   const CELL_COUNT = ROWS * COLS; // 60
@@ -71,7 +73,7 @@
   }
 
   NS.Junqi.constants = {
-    ROWS, COLS, CELL_COUNT,
+    VERSION, ROWS, COLS, CELL_COUNT,
     PIECES, PIECES_PER_SIDE, MINES_PER_SIDE, IMMOBILE,
     DIFFICULTY, STALE_ROUNDS, STALE_LIMIT,
     RIVER_COLS, RIVER_TOP_ROW, RIVER_BOT_ROW,

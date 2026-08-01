@@ -66,6 +66,20 @@ body {
   letter-spacing: 2px;
   color: #ffd9a0;
 }
+/* 版本号小标签：安静地跟在标题旁 */
+.version {
+  align-self: flex-end;
+  margin: 0 2px 3px 6px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  border: 1px solid rgba(159, 182, 198, 0.28);
+  border-radius: 4px;
+  opacity: 0.85;
+}
 .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .controls select, .controls button {
   background: var(--panel-2); color: var(--ink);
