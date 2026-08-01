@@ -85,7 +85,7 @@ function playGame(sideA, sideB, seed) {
 const avg = (xs) => xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0;
 const max = (xs) => xs.length ? Math.max(...xs) : 0;
 
-let winsX = 0, winsY = 0, draws = 0;
+let winsX = 0, winsY = 0, draws = 0, capped = 0;
 const msX = [], msY = [], depthX = [], depthY = [];
 let freeCapX = 0, freeCapY = 0, giftX = 0, giftY = 0, pliesTotal = 0;
 
@@ -105,9 +105,10 @@ for (let i = 0; i < N; i++) {
   if (s.winner === 'draw') { draws++; w = 'draw'; }
   else if (s.winner === s.playerSide) w = 'A';
   else if (s.winner) w = 'B';
+  else capped++; // 打满步数上限仍无胜负（不计入胜负与胜率分母）
   if (w === 'A') (xFirst ? winsX++ : winsY++);
   else if (w === 'B') (xFirst ? winsY++ : winsX++);
-  const tag = w === 'draw' ? '和' : ((w === 'A') === xFirst ? X.name + '胜' : Y.name + '胜');
+  const tag = w === 'draw' ? '和' : w === null ? '满' + s.plies + '步截断' : ((w === 'A') === xFirst ? X.name + '胜' : Y.name + '胜');
   console.log(`#${i + 1} seed=${1000 + i} ${xFirst ? X.name + '先手' : Y.name + '先手'} ${s.plies}步 ${tag}` +
     ` ${X.name}avg=${avg(msXi).toFixed(0)}ms ${Y.name}avg=${avg(msYi).toFixed(0)}ms 被白吃 ${X.name}${fcX}/${Y.name}${fcY}`);
 }
@@ -116,8 +117,8 @@ const decided = winsX + winsY;
 const wr = decided ? winsX / decided : 0;
 console.log(`\n========== 汇总（${X.name} vs ${Y.name}）==========`);
 console.log(`局数: ${N}（先后手各半）  总步数: ${pliesTotal}（场均 ${(pliesTotal / N).toFixed(0)}）`);
-console.log(`胜负: ${X.name} ${winsX} 胜 / ${Y.name} ${winsY} 胜 / 和 ${draws}` +
-  (decided ? `  → ${X.name} 胜率(不计和) ${(100 * wr).toFixed(1)}%` : ''));
+console.log(`胜负: ${X.name} ${winsX} 胜 / ${Y.name} ${winsY} 胜 / 和 ${draws} / 打满截断 ${capped}（合计 ${winsX + winsY + draws + capped}）` +
+  (decided ? `  → ${X.name} 胜率(不计和与截断) ${(100 * wr).toFixed(1)}%` : ''));
 console.log(`每步耗时: ${X.name} avg ${avg(msX).toFixed(0)}ms / max ${max(msX)}ms；${Y.name} avg ${avg(msY).toFixed(0)}ms / max ${max(msY)}ms`);
 if (depthX.length) console.log(`场均完成迭代深度: ${X.name} ${avg(depthX).toFixed(1)}；${Y.name}${depthY.length ? ' ' + avg(depthY).toFixed(1) : '（旧版无此统计）'}`);
 console.log(`大子(≥${BIG})被白吃: ${X.name} 场均 ${(freeCapX / N).toFixed(2)} / ${Y.name} 场均 ${(freeCapY / N).toFixed(2)}`);
