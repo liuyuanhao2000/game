@@ -27,12 +27,51 @@
 
     <div id="hud" class="hud">
       <div id="status" class="status" role="status" aria-live="polite">加载中…</div>
-      <div id="mines" class="mines"></div>
       <div id="lastmove" class="lastmove empty"></div>
     </div>
 
-    <div class="board-wrap">
-      <div id="board" class="board"></div>
+    <div class="battlefield">
+      <!-- 左栏：未翻棋子透视（剧透模式，按阵营分列）+ 拔雷进度 -->
+      <aside class="panel panel-left" aria-label="记牌器：未翻棋子与拔雷进度">
+        <h3 class="panel-title">未翻透视</h3>
+        <div class="hidden-group">
+          <h4 class="group-title group-red">红方未翻</h4>
+          <div class="chips" id="hidden-red"></div>
+        </div>
+        <div class="hidden-group">
+          <h4 class="group-title group-blue">蓝方未翻</h4>
+          <div class="chips" id="hidden-blue"></div>
+        </div>
+        <div class="mine-meter">
+          <div class="meter-row">
+            <span class="meter-label meter-red">红方军旗告急</span>
+            <div class="meter" id="meter-red"><i></i><i></i><i></i></div>
+            <span class="meter-num" id="meter-red-num">0/3</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-label meter-blue">蓝方军旗告急</span>
+            <div class="meter" id="meter-blue"><i></i><i></i><i></i></div>
+            <span class="meter-num" id="meter-blue-num">0/3</span>
+          </div>
+        </div>
+      </aside>
+
+      <div class="board-wrap">
+        <div id="board" class="board"></div>
+      </div>
+
+      <!-- 右栏：双方阵亡棋子 -->
+      <aside class="panel panel-right" aria-label="记牌器：双方阵亡棋子">
+        <h3 class="panel-title">阵亡名册</h3>
+        <div class="lost-group">
+          <h4 class="group-title group-red">红方阵亡 <span class="lost-count" id="lost-red-count">0</span></h4>
+          <div class="chips chips-lost" id="lost-red"></div>
+        </div>
+        <div class="lost-group">
+          <h4 class="group-title group-blue">蓝方阵亡 <span class="lost-count" id="lost-blue-count">0</span></h4>
+          <div class="chips chips-lost" id="lost-blue"></div>
+        </div>
+      </aside>
     </div>
 
     <div id="rules-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="rules-title">

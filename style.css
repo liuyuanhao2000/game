@@ -104,12 +104,6 @@ body {
 }
 .status-mine { border-left-color: #5fd07a; background: #1e4a3a; }
 .status-end { border-left-color: #ffd166; background: #4a3a1e; font-weight: 600; }
-.mines {
-  margin-top: 6px;
-  font-size: clamp(12px, 3vw, 14px);
-  color: var(--muted);
-  min-height: 1em;
-}
 .lastmove {
   margin-top: 6px;
   font-size: clamp(12px, 3vw, 14px);
@@ -138,6 +132,107 @@ body {
   display: block;
 }
 .board-svg { width: 100%; height: auto; border-radius: 8px; }
+
+/* ---- 战场三栏：记牌器（左：未翻透视+拔雷进度 / 中：棋盘 / 右：阵亡名册）---- */
+.battlefield { display: flex; flex-direction: column; gap: 12px; }
+.board-wrap { order: -1; } /* 窄屏：棋盘优先，面板堆叠在后 */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid #2c5578;
+  border-radius: 12px;
+  padding: 14px 14px 16px;
+}
+.panel-title {
+  margin: 0 0 10px;
+  padding-bottom: 8px;
+  font-size: 12px; font-weight: 700; letter-spacing: 3px;
+  color: #ffd9a0;
+  border-bottom: 1px solid rgba(255,217,160,0.18);
+}
+.group-title {
+  margin: 12px 0 8px;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; letter-spacing: 2px;
+}
+.group-title::before { content: ''; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.group-red { color: #f0a39c; }
+.group-red::before { background: var(--p-red); }
+.group-blue { color: #8fb6e0; }
+.group-blue::before { background: var(--p-blue); }
+
+/* 棋子小章（chip）*/
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px 3px 4px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px;
+  transition: opacity 0.3s, filter 0.3s;
+}
+.chip-disc {
+  width: 22px; height: 22px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: "STKaiti", "KaiTi", "Noto Serif SC", "SimSun", serif;
+  font-size: 12px; font-weight: 700; line-height: 1;
+}
+/* 未翻 chip：棋背棕盘 + 阵营色描边（透视）+ 金色计数 */
+.chip-hidden .chip-disc { background: var(--p-back); border: 2px solid var(--p-back-ring); color: #f0d9a8; }
+.chip-hidden.side-red .chip-disc { border-color: var(--p-red); }
+.chip-hidden.side-blue .chip-disc { border-color: var(--p-blue); }
+.chip-count {
+  font-size: 11px; font-weight: 700; color: #ffd166;
+  font-variant-numeric: tabular-nums;
+}
+.chip.zero { opacity: 0.32; filter: grayscale(0.9); }
+.chip.zero .chip-count { text-decoration: line-through; color: var(--muted); }
+
+/* 阵亡 chip：褪色的阵营子 + 划掉的名字 */
+.chip-lost { padding: 3px 8px 3px 4px; }
+.chip-lost .chip-disc { border: 2px solid; opacity: 0.55; }
+.chip-lost.side-red .chip-disc { background: var(--p-red); border-color: var(--p-red-ring); color: #fff5f2; }
+.chip-lost.side-blue .chip-disc { background: var(--p-blue); border-color: var(--p-blue-ring); color: #f2f7ff; }
+.chip-lost .chip-name { font-size: 11px; color: var(--muted); text-decoration: line-through; }
+.lost-count { margin-left: 2px; font-size: 10px; font-weight: 400; letter-spacing: 1px; color: var(--muted); }
+.lost-empty { padding: 2px 4px; font-size: 11px; color: var(--muted); opacity: 0.6; }
+
+/* 拔雷进度（三段，点亮=该方地雷被拔数，满=军旗可攻）*/
+.mine-meter { margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255,217,160,0.18); }
+.meter-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.meter-label { width: 74px; flex: none; font-size: 10px; letter-spacing: 1.5px; }
+.meter-red { color: #f0a39c; }
+.meter-blue { color: #8fb6e0; }
+.meter { display: flex; gap: 4px; flex: 1; }
+.meter i {
+  height: 8px; flex: 1; border-radius: 3px;
+  background: rgba(255,255,255,0.10);
+  transition: background 0.4s, box-shadow 0.4s;
+}
+.meter.lit-red i.on { background: var(--p-red); box-shadow: 0 0 8px rgba(200,65,58,0.7); }
+.meter.lit-blue i.on { background: var(--p-blue); box-shadow: 0 0 8px rgba(47,111,176,0.7); }
+.meter-num { flex: none; font-size: 11px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.meter-num.full { color: #ffd166; }
+
+/* 记牌器动效（尊重 prefers-reduced-motion）*/
+@media (prefers-reduced-motion: no-preference) {
+  .chip-count.pop { animation: chip-pop 0.45s cubic-bezier(.2,.9,.3,1.4); }
+  .chip-lost.chip-enter { animation: chip-enter 0.5s cubic-bezier(.2,.8,.3,1.1) both; }
+}
+@keyframes chip-pop { 40% { transform: scale(1.55); color: #fff; } }
+@keyframes chip-enter { from { transform: translateY(-8px) scale(0.7); opacity: 0; } }
+
+/* 宽屏：三栏并排（利用两侧空白）*/
+@media (min-width: 980px) {
+  .app { max-width: 1100px; }
+  .battlefield {
+    display: grid;
+    grid-template-columns: 250px minmax(0, 1fr) 250px;
+    align-items: start;
+    gap: 14px;
+  }
+  .board-wrap { order: 0; }
+}
 
 /* SVG 内文字 */
 .river-text { fill: var(--river-text); font-size: 0.42px; font-weight: 700; letter-spacing: 0.06px; }

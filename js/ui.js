@@ -79,6 +79,8 @@
     board.appendChild(svgEl);
     // 首次构建静态结构（棋盘骨架）
     buildSkeleton();
+    // 记牌器面板（重开时随 init 重建、计数归零）
+    buildTracker();
   }
 
   function buildSkeleton() {
@@ -482,6 +484,8 @@
         goStopFx();
       }
     }
+
+    renderTracker(state);
   }
 
   function setSelection(index, targets) {
@@ -498,6 +502,133 @@
     t.className = 'toast show';
     clearTimeout(t._timer);
     t._timer = setTimeout(() => { t.className = 'toast'; }, 1500);
+  }
+
+  // ---- 记牌器渲染 ----
+  let trackerBuilt = false;
+  let hiddenEls = null;   // { side: { type: { chip, cnt, prev } } }
+  let lostEls = null;     // { side: 容器 }
+  let prevLost = null;    // { side: { type: n } }——追加 diff 用（state.captured 局内只增）
+
+  // HTML 元素辅助（区别于 SVG 版 el）
+  function hel(tag, cls, parent) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+
+  function buildTracker() {
+    hiddenEls = { red: {}, blue: {} };
+    lostEls = { red: null, blue: null };
+    prevLost = { red: {}, blue: {} };
+    trackerBuilt = true;
+    for (const side of C.SIDES) {
+      const hBox = document.getElementById('hidden-' + side);
+      const lBox = document.getElementById('lost-' + side);
+      if (!hBox || !lBox) { trackerBuilt = false; return; }
+      hBox.innerHTML = '';
+      lBox.innerHTML = '';
+      lostEls[side] = lBox;
+      for (const t in C.PIECES) {
+        const chip = hel('span', 'chip chip-hidden side-' + side, hBox);
+        const disc = hel('span', 'chip-disc', chip);
+        disc.textContent = C.PIECES[t].name;
+        chip.title = (side === 'red' ? '红方' : '蓝方') + C.PIECES[t].name + '（未翻 · 透视）';
+        const cnt = hel('span', 'chip-count', chip);
+        cnt.textContent = '×' + C.PIECES[t].count;
+        hiddenEls[side][t] = { chip, cnt, prev: C.PIECES[t].count };
+      }
+      hel('span', 'lost-empty', lBox).textContent = side === 'red' ? '红方暂无阵亡' : '蓝方暂无阵亡';
+    }
+  }
+
+  function renderTracker(state) {
+    if (!trackerBuilt) return;
+    const data = trackerData(state);
+    for (const side of C.SIDES) {
+      // 未翻透视：计数刷新 / ×0 灰显 / 变化弹跳
+      for (const t in C.PIECES) {
+        const e = hiddenEls[side][t];
+        const n = data.hidden[side][t];
+        if (n !== e.prev) {
+          e.prev = n;
+          e.cnt.textContent = '×' + n;
+          e.chip.classList.toggle('zero', n === 0);
+          if (!reduceMotion) { e.cnt.classList.remove('pop'); void e.cnt.offsetWidth; e.cnt.classList.add('pop'); }
+        }
+      }
+      // 阵亡名册：追加 diff（每枚阵亡子一枚 chip，新阵亡滑入）
+      const box = lostEls[side];
+      const counts = {};
+      for (const t of data.lost[side]) counts[t] = (counts[t] || 0) + 1;
+      const prev = prevLost[side];
+      let changed = false;
+      for (const t in counts) {
+        const delta = counts[t] - (prev[t] || 0);
+        for (let k = 0; k < delta; k++) {
+          const emptyEl = box.querySelector('.lost-empty');
+          if (emptyEl && emptyEl.parentNode) emptyEl.parentNode.removeChild(emptyEl);
+          const chip = hel('span', 'chip chip-lost side-' + side + (reduceMotion ? '' : ' chip-enter'), box);
+          const disc = hel('span', 'chip-disc', chip);
+          disc.textContent = C.PIECES[t].name;
+          const name = hel('span', 'chip-name', chip);
+          name.textContent = C.PIECES[t].name;
+          chip.title = (side === 'red' ? '红方' : '蓝方') + C.PIECES[t].name + '（阵亡）';
+          changed = true;
+        }
+      }
+      if (changed) prevLost[side] = counts;
+      const lc = document.getElementById('lost-' + side + '-count');
+      if (lc) lc.textContent = String(data.lost[side].length);
+    }
+    // 拔雷进度：三段点亮，满额转金色
+    for (const side of C.SIDES) {
+      const meter = document.getElementById('meter-' + side);
+      const num = document.getElementById('meter-' + side + '-num');
+      const n = data.minesLost[side];
+      if (meter) {
+        meter.classList.add('lit-' + side);
+        for (let i = 0; i < meter.children.length; i++) {
+          meter.children[i].classList.toggle('on', i < n);
+        }
+      }
+      if (num) {
+        num.textContent = n + '/' + C.MINES_PER_SIDE;
+        num.classList.toggle('full', n >= C.MINES_PER_SIDE);
+      }
+    }
+  }
+
+  // ---- 记牌器数据层（纯函数、不碰 DOM，可单测）----
+  // hidden：各方未翻棋子（透视）= 初始数 − 已翻出 − 已阵亡（state.captured）
+  // lost：各方阵亡清单（state.captured 展开，按 rank 降序；被吃的子必然已翻开过，属公开信息）
+  function trackerData(state) {
+    const hidden = { red: {}, blue: {} };
+    const revealedCnt = { red: {}, blue: {} };
+    for (const side of C.SIDES) {
+      for (const t in C.PIECES) { hidden[side][t] = C.PIECES[t].count; revealedCnt[side][t] = 0; }
+    }
+    for (let i = 0; i < state.board.length; i++) {
+      const c = state.board[i];
+      if (c.piece && c.revealed) revealedCnt[c.piece.side][c.piece.type] += 1;
+    }
+    const lost = { red: [], blue: [] };
+    for (const side of C.SIDES) {
+      for (const t in C.PIECES) {
+        const cap = (state.captured && state.captured[t + ':' + side]) || 0;
+        hidden[side][t] -= revealedCnt[side][t] + cap;
+        for (let k = 0; k < cap; k++) lost[side].push(t);
+      }
+      lost[side].sort((a, b) => C.PIECES[b].rank - C.PIECES[a].rank);
+    }
+    return {
+      hidden, lost,
+      minesLost: {
+        red: (state.minesLost && state.minesLost.red) || 0,
+        blue: (state.minesLost && state.minesLost.blue) || 0,
+      },
+    };
   }
 
   // ---- 结算庆祝粒子（canvas：胜利=金红纸屑雨 / 败=灰蓝缓落 / 和=金尘）----
@@ -593,6 +724,6 @@
   }
 
   NS.Junqi.ui = {
-    init, render, setSelection, clearSelection, toast, flashInvalid,
+    init, render, setSelection, clearSelection, toast, flashInvalid, trackerData,
   };
 })();
