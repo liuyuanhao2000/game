@@ -187,16 +187,20 @@
     return best;
   }
 
-  // ---- 困难：有限深度 expectimax + 概率 ----
-  const NODE_BUDGET = 4000;
-  const TIME_BUDGET_MS = 800;
-  let _nodes = 0, _deadline = 0;
+  // ---- 困难/大师：有限深度 expectimax + 概率 ----
+  // 难度预置：master = 更深预算 + 叶子静态交换搜索(quiescence) + 翻棋采样加宽
+  const PRESETS = {
+    hard:   { time: 800,  nodes: 4000,  maxDepth: 8,  flipK: 3, flipPMin: 0,    quiesce: false, qdepth: 4, qDelta: 15 },
+    master: { time: 2000, nodes: 12000, maxDepth: 10, flipK: 5, flipPMin: 0.06, quiesce: true,  qdepth: 4, qDelta: 15 },
+  };
+  let _cfg = PRESETS.hard; // 当前搜索配置（chooseHard 入口设置，finally 复位为 hard 语义）
+  let _nodes = 0, _deadline = 0, _lastDepth = 0; // _lastDepth：最近一次搜索完成的迭代深度（观测用）
 
   function BudgetExceeded() {}
   function checkBudget() {
     if (!_deadline) return; // 不在搜索中（如外部直接调 evaluate）→ 不设限
     _nodes++;
-    if (_nodes > NODE_BUDGET || Date.now() > _deadline) throw new BudgetExceeded();
+    if (_nodes > _cfg.nodes || Date.now() > _deadline) throw new BudgetExceeded();
   }
 
   // 威胁扣分权重（分层；工兵在敌方尚有雷时按拔雷资产抬高）
@@ -287,6 +291,26 @@
         score += Math.min(6, guards * 2);
       }
     }
+    // ---- 进攻项 rush（双档共享，诚实）：敌雷拔光且敌旗已翻 → 己方可动子近敌旗加分 ----
+    if (state.minesLost && state.minesLost[enemy] >= C.MINES_PER_SIDE) {
+      let eFlagIdx = -1;
+      for (let i = 0; i < state.board.length; i++) {
+        const c = state.board[i];
+        if (c.piece && c.revealed && c.piece.type === 'flag' && c.piece.side === enemy) { eFlagIdx = i; break; }
+      }
+      if (eFlagIdx >= 0) {
+        const [efr, efc] = B.rc(eFlagIdx);
+        let rush = 0;
+        for (let i = 0; i < state.board.length; i++) {
+          const c = state.board[i];
+          if (!c.piece || !c.revealed || c.piece.side !== side) continue;
+          if (C.IMMOBILE.indexOf(c.piece.type) !== -1) continue;
+          const [pr, pc] = B.rc(i);
+          rush += Math.max(0, 6 - (Math.abs(pr - efr) + Math.abs(pc - efc))) * 1.5;
+        }
+        score += Math.min(12, rush);
+      }
+    }
     return score;
   }
 
@@ -371,14 +395,83 @@
       .map((x) => x.a);
   }
 
-  // expectimax + alpha-beta：max/min 节点按窗口剪枝；flip 动作产生 chance 节点
-  function expectimax(state, side, depth, alpha = -Infinity, beta = Infinity) {
+  // 当前行棋方的吃子走法（quiesce 专用）：只留有希望的捕获——
+  // 夺旗 / 攻击者存活 / 同归且目标价值≥攻击者。无望牺牲不进搜索（对手永远可 stand-pat，sound）。
+  function captureActions(state) {
+    const mover = state.turn;
+    const out = [];
+    for (let i = 0; i < state.board.length; i++) {
+      const cell = state.board[i];
+      if (!cell.piece || !cell.revealed || cell.piece.side !== mover) continue;
+      if (C.IMMOBILE.indexOf(cell.piece.type) !== -1) continue;
+      for (const m of R.legalMoves(state, i)) {
+        const t = state.board[m.to];
+        if (!t.piece) continue; // 仅吃子（legalMoves 已保证是已翻敌子）
+        const res = R.resolveBattle(cell.piece, t.piece);
+        if (res.flagCaptured) { out.push(m); continue; }
+        const survives = res.to && res.to.piece === cell.piece;
+        const trade = res.to === null;
+        if (!survives && !(trade && valueOf(t.piece.type) >= valueOf(cell.piece.type))) continue;
+        out.push(m);
+      }
+    }
+    return orderActions(state, mover, out, null); // MVV-LVA 序
+  }
+
+  // 叶子静态交换搜索（master）：在叶子展开吃子链，消除水平线效应（贪吃→下一手被反吃）。
+  // stand-pat 基线 + 只展开 captureActions + delta 剪枝；winner 先于 stand-pat；
+  // 禁 try/catch（BudgetExceeded 须穿透到 chooseHard 内层 catch 走 bestSoFar 语义）。
+  function quiesce(state, side, alpha, beta, qleft) {
     checkBudget();
     if (state.winner) {
       if (state.winner === 'draw') return 0;
       return state.winner === side ? 100000 : -100000;
     }
-    if (depth <= 0) return evaluate(state, side);
+    const stand = evaluate(state, side);
+    if (qleft <= 0) return stand;
+    if (state.turn === side) {
+      // max 分支
+      if (stand >= beta) return stand;
+      let best = stand;
+      if (stand > alpha) alpha = stand;
+      for (const m of captureActions(state)) {
+        if (stand + valueOf(state.board[m.to].piece.type) + _cfg.qDelta < alpha) continue; // delta 剪枝
+        const s = clone(state);
+        applyOnClone(s, m);
+        const v = quiesce(s, side, alpha, beta, qleft - 1);
+        if (v > best) best = v;
+        if (best > alpha) alpha = best;
+        if (alpha >= beta) break;
+      }
+      return best;
+    }
+    // min 分支（对手走）：镜像
+    if (stand <= alpha) return stand;
+    let best = stand;
+    if (stand < beta) beta = stand;
+    for (const m of captureActions(state)) {
+      if (stand - valueOf(state.board[m.to].piece.type) - _cfg.qDelta > beta) continue; // delta 剪枝
+      const s = clone(state);
+      applyOnClone(s, m);
+      const v = quiesce(s, side, alpha, beta, qleft - 1);
+      if (v < best) best = v;
+      if (best < beta) beta = best;
+      if (alpha >= beta) break;
+    }
+    return best;
+  }
+
+  // expectimax + alpha-beta：max/min 节点按窗口剪枝；flip 动作产生 chance 节点
+  // inChance：flip chance 子树内全窗口（无偏期望），且叶子不开 quiesce（全窗口下剪枝失效，成本爆炸）
+  function expectimax(state, side, depth, alpha = -Infinity, beta = Infinity, inChance = false) {
+    checkBudget();
+    if (state.winner) {
+      if (state.winner === 'draw') return 0;
+      return state.winner === side ? 100000 : -100000;
+    }
+    if (depth <= 0) {
+      return (_cfg.quiesce && !inChance) ? quiesce(state, side, alpha, beta, _cfg.qdepth) : evaluate(state, side);
+    }
 
     const actions = orderActions(state, state.turn, enumerateActions(state, state.turn), null);
     if (!actions.length) {
@@ -390,7 +483,7 @@
     if (mover === side) {
       best = -Infinity;
       for (const a of actions) {
-        const v = actionValue(state, a, side, depth, alpha, beta);
+        const v = actionValue(state, a, side, depth, alpha, beta, inChance);
         if (v > best) best = v;
         if (best > alpha) alpha = best;
         if (alpha >= beta) break; // 剪枝
@@ -398,7 +491,7 @@
     } else {
       best = Infinity;
       for (const a of actions) {
-        const v = actionValue(state, a, side, depth, alpha, beta);
+        const v = actionValue(state, a, side, depth, alpha, beta, inChance);
         if (v < best) best = v;
         if (best < beta) beta = best;
         if (alpha >= beta) break; // 剪枝
@@ -408,12 +501,12 @@
   }
 
   // 单个动作的期望值：move 为确定（传窗口），flip 为 chance（按剩余分布 top-K 采样，全窗口取精确期望）
-  function actionValue(state, action, side, depth, alpha = -Infinity, beta = Infinity) {
+  function actionValue(state, action, side, depth, alpha = -Infinity, beta = Infinity, inChance = false) {
     checkBudget();
     if (action.kind === 'move') {
       const s = clone(state);
       applyOnClone(s, action);
-      return expectimax(s, side, depth - 1, alpha, beta);
+      return expectimax(s, side, depth - 1, alpha, beta, inChance);
     }
     // flip -> chance 节点
     const { rem, totalUnrevealed } = remainingDistribution(state);
@@ -424,7 +517,11 @@
       if (rem[key] > 0) probs.push({ key, p: rem[key] / totalUnrevealed });
     }
     probs.sort((a, b) => b.p - a.p);
-    const K = Math.min(3, probs.length);
+    // 自适应采样宽度：仅在概率集中（p≥flipPMin 的个数）时加宽，下限 3。
+    // hard 的 flipK=3/flipPMin=0 使本式恒等于现状（K=min(3,len)）；master 只在残局子树便宜时扩到 4–5。
+    let countGE = 0;
+    if (_cfg.flipPMin > 0) { for (const pr of probs) if (pr.p >= _cfg.flipPMin) countGE++; }
+    const K = Math.min(_cfg.flipK, probs.length, Math.max(3, countGE));
     let exp = 0, weightSum = 0;
     for (let k = 0; k < K; k++) {
       const { key, p } = probs[k];
@@ -437,8 +534,8 @@
       s.staleCount = 0;
       s.turn = C.opposite(s.turn);
       s.winner = R.checkWinner(s);
-      // chance 子树强制全窗口：截断值参与加权平均会有偏
-      exp += p * expectimax(s, side, depth - 1, -Infinity, Infinity);
+      // chance 子树强制全窗口：截断值参与加权平均会有偏；inChance=true 且叶子不开 quiesce
+      exp += p * expectimax(s, side, depth - 1, -Infinity, Infinity, true);
     }
     // 归一化（top-K 未覆盖部分用当前估值近似）
     if (weightSum < 1) {
@@ -449,10 +546,9 @@
     return exp;
   }
 
-  const MAX_DEPTH = 8;
-
-  function chooseHard(state, side) {
-    _nodes = 0; _deadline = Date.now() + TIME_BUDGET_MS;
+  function chooseHard(state, side, cfg = PRESETS.hard) {
+    _cfg = cfg;
+    _nodes = 0; _deadline = Date.now() + cfg.time; _lastDepth = 0;
     try {
       const actions = enumerateActions(state, side);
       if (!actions.length) return null;
@@ -460,7 +556,7 @@
       let ordered = orderActions(state, side, actions, threat); // 根节点精确排序
       let bestSoFar = ordered[0]; // 兜底＝静态最优着：任何情况下都有确定走法，不再回退 medium
       let lastIterMs = 0;
-      for (let depth = 1; depth <= MAX_DEPTH; depth++) {
+      for (let depth = 1; depth <= cfg.maxDepth; depth++) {
         // 软停：预计本层跑不完剩余时间就不开新深度
         if (lastIterMs > 0 && Date.now() + lastIterMs * 3 > _deadline) break;
         const t0 = Date.now();
@@ -473,6 +569,7 @@
             if (v > bestV) { bestV = v; best = a; }
           }
           bestSoFar = best; // ★ 只有完整跑完的深度才提交
+          _lastDepth = depth;
           ordered = scores.sort((x, y) => y.v - x.v).map((x) => x.a); // best-first 喂下一层
           lastIterMs = Date.now() - t0;
         } catch (e) {
@@ -485,18 +582,21 @@
       if (e instanceof BudgetExceeded) return null; // 理论不可达（内层已捕获）
       return chooseMedium(state, side); // 非预算异常的终极兜底
     } finally {
-      _deadline = 0; // 搜索结束：解除预算闸，后续直接调 evaluate 不再受限
+      _deadline = 0;          // 搜索结束：解除预算闸，后续直接调 evaluate 不再受限
+      _cfg = PRESETS.hard;    // 复位为 hard 语义（搜索外裸调 evaluate/quiesce 行为稳定）
     }
   }
 
   function chooseMove(state, difficulty, side) {
     if (difficulty === C.DIFFICULTY.EASY) return chooseEasy(state, side);
     if (difficulty === C.DIFFICULTY.MEDIUM) return chooseMedium(state, side);
+    if (difficulty === C.DIFFICULTY.MASTER) return chooseHard(state, side, PRESETS.master);
     return chooseHard(state, side);
   }
 
   NS.Junqi.ai = {
-    chooseMove, enumerateActions, evaluate, remainingDistribution,
-    threatMapOf, dangerAt, threatWeight,
+    chooseMove, chooseHard, enumerateActions, evaluate, remainingDistribution,
+    threatMapOf, dangerAt, threatWeight, PRESETS, quiesce,
+    lastDepth: () => _lastDepth,
   };
 })();

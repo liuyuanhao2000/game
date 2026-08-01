@@ -1,6 +1,6 @@
 # 军旗翻翻棋（暗棋）
 
-浏览器军旗翻翻棋小游戏，支持人机对战（简单/普通/困难三档 AI）。零依赖、零构建，双击 `index.html` 即玩。
+浏览器军旗翻翻棋小游戏，支持人机对战（简单/普通/困难/大师四档 AI）。零依赖、零构建，双击 `index.html` 即玩。
 
 ## 玩法
 
@@ -46,7 +46,7 @@ js/constants.js               # 棋子表/价值/常量
 js/board.js                   # 棋盘地形、楚河邻接、铁路图
 js/rules.js                   # 合法走法/交战结算/胜负（纯函数）
 js/state.js                   # 游戏状态唯一真源
-js/ai.js                      # 三档 AI（随机/启发式/expectimax+概率）
+js/ai.js                      # 四档 AI（随机/启发式/expectimax 搜索/大师=搜索+叶子静态交换搜索）
 js/ui.js / js/main.js         # 渲染与回合调度
 tests/                        # Node 单测
 docs/superpowers/specs/       # 设计文档

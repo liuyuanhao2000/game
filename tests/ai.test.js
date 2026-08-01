@@ -288,3 +288,104 @@ test('ai: engineer takes revealed mine when available (T4)', () => {
   assert.ok(h && h.kind === 'move' && h.from === idx(10, 0) && h.to === idx(10, 1),
     'hard 工兵应挖雷，got ' + JSON.stringify(h));
 });
+
+// ============ 大师档（master）============
+test('ai: DIFFICULTY.MASTER exists and returns legal move', () => {
+  assert.strictEqual(C.DIFFICULTY.MASTER, 'master');
+  const st = midgameState();
+  const t0 = Date.now();
+  const a = AI.chooseMove(st, C.DIFFICULTY.MASTER, 'blue');
+  assert.ok(Date.now() - t0 < 15000, 'master 应远快于 15s');
+  assert.ok(a, 'master should return an action');
+  assert.ok(isLegal(a, st, 'blue'), 'master action must be legal');
+});
+
+// 局面 D：蓝连长(0,1) 可吃红排长(0,2)，但吃后被红营长(0,3) 反吃 → 蓝无棋判负
+test('ai: quiesce sees recapture that evaluate misses (whitebox A)', () => {
+  const d = emptyState('blue');
+  place(d, 0, 1, 'company', 'blue');
+  place(d, 0, 2, 'platoon', 'red');
+  place(d, 0, 3, 'battalion', 'red');
+  // 局面 P：蓝连长已吃排长（蓝在 (0,2)，红先）
+  const p = emptyState('red');
+  place(p, 0, 2, 'company', 'blue');
+  place(p, 0, 3, 'battalion', 'red');
+  // 裸 evaluate 只见子力与弱权重威胁 → 看不出败势
+  assert.ok(AI.evaluate(p, 'blue') > -50, 'evaluate 不应看出败局，实际 ' + AI.evaluate(p, 'blue'));
+  // quiesce 展开红营长反吃 → 蓝无合法行动 → 红胜
+  const q = AI.quiesce(p, 'blue', -Infinity, Infinity, 4);
+  assert.ok(q < -90000, 'quiesce 应看出必败，实际 ' + q);
+  // qleft=0 严格等于裸 evaluate（stand-pat）
+  assert.strictEqual(AI.quiesce(p, 'blue', -Infinity, Infinity, 0), AI.evaluate(p, 'blue'));
+  // 局面 D 上 quiesce：拒绝贪吃陷阱（不吃则子力 -12 左右，吃了是 -100000）
+  assert.ok(AI.quiesce(d, 'blue', -Infinity, Infinity, 4) > -50, 'quiesce 应拒绝诱吃');
+});
+
+test('ai: master avoids bait capture at depth 1, hard preset takes it (behavior B)', () => {
+  const st = emptyState('blue');
+  place(st, 0, 1, 'company', 'blue');
+  place(st, 0, 2, 'platoon', 'red');
+  place(st, 0, 3, 'battalion', 'red');
+  // hard 预置 maxDepth=1：裸 evaluate 叶子 → 贪吃排长
+  const hardA = AI.chooseHard(st, 'blue', Object.assign({}, AI.PRESETS.hard, { maxDepth: 1 }));
+  assert.ok(hardA && hardA.kind === 'move' && hardA.to === idx(0, 2),
+    'hard(maxDepth=1) 应贪吃排长，got ' + JSON.stringify(hardA));
+  // master 预置 maxDepth=1：quiesce 在叶子看出反吃 → 避开诱吃
+  const masterA = AI.chooseHard(st, 'blue', Object.assign({}, AI.PRESETS.master, { maxDepth: 1 }));
+  assert.ok(masterA && masterA.kind === 'move' && masterA.from === idx(0, 1) && masterA.to !== idx(0, 2),
+    'master(maxDepth=1) 应避开诱吃，got ' + JSON.stringify(masterA));
+});
+
+test('ai: master regression locks (逃营 / 工兵挖雷 / 明显白吃)', () => {
+  // 1) 逃营（同 T2 局面）
+  const st = emptyState('blue');
+  place(st, 3, 0, 'general', 'blue');
+  place(st, 2, 0, 'commander', 'red');
+  place(st, 8, 2, 'platoon', 'blue');
+  place(st, 8, 3, 'engineer', 'red');
+  let t0 = Date.now();
+  const a = AI.chooseMove(st, C.DIFFICULTY.MASTER, 'blue');
+  assert.ok(Date.now() - t0 < 5000, 'master <5s');
+  assert.ok(a && a.kind === 'move' && a.from === idx(3, 0) && [idx(2, 1), idx(4, 1)].includes(a.to),
+    'master 军长应逃入行营，got ' + JSON.stringify(a));
+
+  // 2) 工兵挖雷（同 T4 局面）
+  const st2 = emptyState('blue');
+  place(st2, 10, 0, 'engineer', 'blue');
+  place(st2, 10, 1, 'mine', 'red');
+  place(st2, 11, 4, 'flag', 'red');
+  t0 = Date.now();
+  const m = AI.chooseMove(st2, C.DIFFICULTY.MASTER, 'blue');
+  assert.ok(Date.now() - t0 < 5000, 'master <5s');
+  assert.ok(m && m.kind === 'move' && m.from === idx(10, 0) && m.to === idx(10, 1),
+    'master 工兵应挖雷，got ' + JSON.stringify(m));
+
+  // 3) 明显白吃
+  const st3 = emptyState('blue');
+  place(st3, 1, 0, 'commander', 'blue');
+  place(st3, 1, 1, 'platoon', 'red');
+  t0 = Date.now();
+  const c = AI.chooseMove(st3, C.DIFFICULTY.MASTER, 'blue');
+  assert.ok(Date.now() - t0 < 5000, 'master <5s');
+  assert.ok(c && c.kind === 'move' && c.from === idx(1, 0) && c.to === idx(1, 1),
+    'master 司令应吃白吃的排长，got ' + JSON.stringify(c));
+});
+
+test('ai: evaluate rush term — press toward enemy flag once its mines are cleared', () => {
+  // 红雷拔光 + 红旗已翻 (11,2)：蓝营长贴旗 (10,2) vs 远处 (0,0)
+  const near = emptyState('blue'); place(near, 11, 2, 'flag', 'red'); place(near, 10, 2, 'battalion', 'blue');
+  const far = emptyState('blue'); place(far, 11, 2, 'flag', 'red'); place(far, 0, 0, 'battalion', 'blue');
+  near.minesLost.red = 3; far.minesLost.red = 3;
+  const d = AI.evaluate(near, 'blue') - AI.evaluate(far, 'blue');
+  assert.ok(d > 3, '贴近敌旗应获 rush 加分，实际 ' + d.toFixed(2));
+  // 对照：雷未拔光 → 不触发（差异仅来自机动项 <3）
+  const n0 = emptyState('blue'); place(n0, 11, 2, 'flag', 'red'); place(n0, 10, 2, 'battalion', 'blue');
+  const f0 = emptyState('blue'); place(f0, 11, 2, 'flag', 'red'); place(f0, 0, 0, 'battalion', 'blue');
+  n0.minesLost.red = 2; f0.minesLost.red = 2;
+  assert.ok(Math.abs(AI.evaluate(n0, 'blue') - AI.evaluate(f0, 'blue')) < 3, '雷未拔光不应触发');
+  // 诚实性：暗旗（未翻）→ 不触发
+  const nh = emptyState('blue'); place(nh, 11, 2, 'flag', 'red', false); place(nh, 10, 2, 'battalion', 'blue');
+  const fh = emptyState('blue'); place(fh, 11, 2, 'flag', 'red', false); place(fh, 0, 0, 'battalion', 'blue');
+  nh.minesLost.red = 3; fh.minesLost.red = 3;
+  assert.ok(Math.abs(AI.evaluate(nh, 'blue') - AI.evaluate(fh, 'blue')) < 3, '暗旗不应泄露位置');
+});

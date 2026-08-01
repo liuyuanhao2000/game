@@ -35,7 +35,7 @@
   const IMMOBILE = ['mine', 'flag'];
 
   // AI 难度枚举
-  const DIFFICULTY = { EASY: 'easy', MEDIUM: 'medium', HARD: 'hard' };
+  const DIFFICULTY = { EASY: 'easy', MEDIUM: 'medium', HARD: 'hard', MASTER: 'master' };
 
   // 困局兜底：连续 STALE_ROUNDS 回合无吃子且无翻棋则判和
   // 一回合 = 双方各走一步 = 2 个单方动作(ply)；staleCount 以 ply 计数
