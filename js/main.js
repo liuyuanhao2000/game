@@ -12,9 +12,27 @@
   let state = null;
   let difficulty = C.DIFFICULTY.HARD; // 默认困难档（下拉框默认项与此一致）
   let aiTimer = null;
+  // AI 思考 Worker（后台线程，思考时不冻屏）；不可用时（file:// 等）自动同步降级
+  let aiWorker = null;
+  let thinkId = 0;        // 当前思考请求号；reset 时自增使悬挂结果作废
+  let thinkWatchdog = 0;  // 看门狗：防 worker 静默死亡导致 AI 停摆
   // UI 瞬态（选中/落点）不挂在游戏状态上，保持 state 纯粹、可序列化
   let selIndex = null;
   let selTargets = null;
+
+  // 纯数据快照：JSON 往返静默丢弃 onChange 等函数，保留全部纯数据（<1ms）
+  function snapshot(st) { return JSON.parse(JSON.stringify(st)); }
+
+  function ensureWorker() {
+    if (aiWorker || typeof Worker === 'undefined') return;
+    try {
+      aiWorker = new Worker('js/ai-worker.js');
+      aiWorker.onmessage = onWorkerResult;
+      aiWorker.onerror = onWorkerError;
+    } catch (e) {
+      aiWorker = null; // file:// 等场景 new Worker 抛 SecurityError → 同步降级
+    }
+  }
 
   function start() {
     state = STATE.createInitialState();
@@ -35,6 +53,8 @@
 
   function reset() {
     if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; }
+    thinkId++; // 使 worker 中悬挂的思考结果作废（回来时按 id 检查丢弃）
+    if (thinkWatchdog) { clearTimeout(thinkWatchdog); thinkWatchdog = 0; }
     start();
   }
 
@@ -140,12 +160,46 @@
   function runAI() {
     if (state.winner) return;
     if (!state.sidesAssigned) return; // AI 不会先行翻棋
+    ensureWorker();
+    if (aiWorker) {
+      const id = ++thinkId;
+      aiWorker.postMessage({ type: 'think', id, state: snapshot(state), difficulty, side: state.aiSide });
+      if (thinkWatchdog) clearTimeout(thinkWatchdog);
+      thinkWatchdog = setTimeout(() => {
+        aiWorker = null; // 看门狗触发：worker 静默死亡 → 弃用并同步补这一步
+        runAISync();
+      }, 15000);
+      return;
+    }
+    runAISync(); // 无 Worker（file:// 等）→ 同步路径，行为与改造前一致
+  }
+
+  function runAISync() {
+    if (state.winner) return;
+    if (!state.sidesAssigned) return;
     const action = AI.chooseMove(state, difficulty, state.aiSide);
     // 理论不可达：若 AI 方无合法走法，上一步 applyMove 的 checkWinner 已判负，
     // scheduleAI 在 winner 非空时不会调度；此处仅防御性返回。
     if (!action) return;
     STATE.applyMove(state, action);
     // 渲染由 state.onChange 触发（恰好一次），避免二次渲染打断动画
+  }
+
+  function onWorkerResult(e) {
+    const msg = (e && e.data) || {};
+    if (msg.type !== 'result') return;
+    if (msg.id !== thinkId) return; // 过期结果（已重开新局）→ 丢弃
+    if (thinkWatchdog) { clearTimeout(thinkWatchdog); thinkWatchdog = 0; }
+    if (state.winner || !state.sidesAssigned) return; // 局面已变（防御）
+    if (!msg.action) return;
+    STATE.applyMove(state, msg.action); // notify → 恰好渲染一次
+  }
+
+  function onWorkerError() {
+    // worker 出错：弃用并立即同步补走这一步，后续走同步路径，避免 AI 停摆
+    if (thinkWatchdog) { clearTimeout(thinkWatchdog); thinkWatchdog = 0; }
+    aiWorker = null;
+    runAISync();
   }
 
   // 暴露调试接口

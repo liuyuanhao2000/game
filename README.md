@@ -22,6 +22,8 @@ python3 -m http.server 8000
 # 浏览器访问 http://localhost:8000
 ```
 
+经 HTTP 部署（如 `./run.sh`）时，困难/大师档 AI 的思考在后台线程（Web Worker）进行，AI 思考期间页面不冻屏、动画照常播放；`file://` 直接打开时自动降级为同步思考，游戏行为完全一致。
+
 ## 测试
 
 规则/状态/AI 为纯逻辑，用 Node 内置测试框架（需 Node ≥ 18，`node:test`）：

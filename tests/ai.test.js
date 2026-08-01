@@ -389,3 +389,36 @@ test('ai: evaluate rush term — press toward enemy flag once its mines are clea
   nh.minesLost.red = 3; fh.minesLost.red = 3;
   assert.ok(Math.abs(AI.evaluate(nh, 'blue') - AI.evaluate(fh, 'blue')) < 3, '暗旗不应泄露位置');
 });
+
+// ============ Worker 前提：纯数据快照可驱动 AI ============
+function boardSig(st) {
+  return JSON.stringify(st.board) + '|' + st.turn + '|' + JSON.stringify(st.minesLost) + '|' + JSON.stringify(st.captured);
+}
+
+test('ai: JSON snapshot drives chooseMove identically; live state untouched', () => {
+  const st = midgameState(); // 确定性局面（i%3 翻棋）
+  const snap = JSON.parse(JSON.stringify(st)); // 模拟主线程→Worker 的快照传输（丢弃 onChange）
+  const origRandom = Math.random;
+  const reseed = () => { // medium 含噪声：两次调用喂同一随机序列，保证可比
+    let a = 12345;
+    Math.random = () => {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+  try {
+    for (const diff of [C.DIFFICULTY.MEDIUM, C.DIFFICULTY.HARD, C.DIFFICULTY.MASTER]) {
+      const sigBefore = boardSig(st);
+      reseed();
+      const aLive = AI.chooseMove(st, diff, 'blue');
+      assert.strictEqual(boardSig(st), sigBefore, diff + ': chooseMove 不得篡改输入状态');
+      reseed();
+      const aSnap = AI.chooseMove(snap, diff, 'blue');
+      assert.deepStrictEqual(aSnap, aLive, diff + ': 快照与活状态应产出相同动作');
+    }
+  } finally {
+    Math.random = origRandom;
+  }
+});
