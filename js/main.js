@@ -8,6 +8,7 @@
   const STATE = NS.Junqi.state;
   const AI = NS.Junqi.ai;
   const UI = NS.Junqi.ui;
+  const SFX = NS.Junqi.sfx;
 
   let state = null;
   let difficulty = C.DIFFICULTY.HARD; // 默认困难档（下拉框默认项与此一致）
@@ -112,6 +113,7 @@
       for (const m of moves) selTargets[m.to] = true;
       UI.setSelection(i, moves);
       UI.render(state);
+      SFX.play('select');
       return;
     }
 
@@ -121,10 +123,10 @@
       return;
     }
 
-    // 有选中时点到「非法目标」（空地 / 不可攻的敌子）→ 格子闪红反馈，而非静默
+    // 有选中时点到「非法目标」（空地 / 不可攻的敌子）→ 格子闪红 + 音效反馈，而非静默
     if (hadSel) {
       const isEnemy = cell.piece && cell.revealed && cell.piece.side !== state.playerSide;
-      if (!cell.piece || isEnemy) UI.flashInvalid(i);
+      if (!cell.piece || isEnemy) { UI.flashInvalid(i); SFX.play('invalid'); }
     }
     clearSel();
     UI.render(state);
@@ -146,9 +148,25 @@
       if (action.to != null) UI.flashInvalid(action.to);
       UI.render(state);
       UI.toast('非法操作，已忽略');
+      SFX.play('invalid');
       return;
     }
+    soundAfterApply();
     scheduleAI();
+  }
+
+  // 落子后的音效（玩家 / 同步 AI / Worker 三路径共用）：
+  // 先播动作音（翻/落/吃/炸/雷），若刚终局则延迟 350ms 让动作音先落再奏胜负小调
+  function soundAfterApply() {
+    const name = SFX.soundFor(state.lastMove);
+    if (name) SFX.play(name);
+    if (state.winner) {
+      const w = state.winner;
+      setTimeout(() => {
+        if (state.winner !== w) return; // 期间已重开/局面变化 → 不播
+        SFX.play(w === 'draw' ? 'draw' : (w === state.playerSide ? 'win' : 'lose'));
+      }, 350);
+    }
   }
 
   function scheduleAI() {
@@ -185,6 +203,7 @@
     if (!action) return;
     STATE.applyMove(state, action);
     // 渲染由 state.onChange 触发（恰好一次），避免二次渲染打断动画
+    soundAfterApply();
   }
 
   function onWorkerResult(e) {
@@ -195,6 +214,7 @@
     if (state.winner || !state.sidesAssigned) return; // 局面已变（防御）
     if (!msg.action) return;
     STATE.applyMove(state, msg.action); // notify → 恰好渲染一次
+    soundAfterApply();
   }
 
   function onWorkerError() {

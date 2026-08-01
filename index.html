@@ -20,6 +20,7 @@
             <option value="master">大师</option>
           </select>
         </label>
+        <button id="sfx-toggle" title="音效开关">🔊 音效</button>
         <button id="restart">重新开局</button>
         <button id="rules-btn">规则</button>
       </div>
@@ -113,6 +114,7 @@
   <script src="js/rules.js"></script>
   <script src="js/state.js"></script>
   <script src="js/ai.js"></script>
+  <script src="js/sfx.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/main.js"></script>
   <script>
@@ -120,6 +122,12 @@
     document.getElementById('difficulty').addEventListener('change', (e) => {
       Junqi.main.setDifficulty(e.target.value);
     });
+
+    // 音效开关（持久化到 localStorage）
+    const sfxBtn = document.getElementById('sfx-toggle');
+    const syncSfxBtn = () => { sfxBtn.textContent = Junqi.sfx.isMuted() ? '🔇 静音' : '🔊 音效'; };
+    sfxBtn.addEventListener('click', () => { Junqi.sfx.toggleMuted(); syncSfxBtn(); });
+    syncSfxBtn();
 
     // 重新开局：二次点击确认，防误触
     const restartBtn = document.getElementById('restart');
