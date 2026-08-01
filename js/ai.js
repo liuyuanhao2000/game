@@ -48,11 +48,18 @@
   }
 
   // ---- 普通：贪心启发式 + 1-ply 安全 ----
-  // 评估单个动作的即时分数（从 side 视角）
-  function scoreActionMedium(state, side, action) {
+  // 评估单个动作的即时分数（从 side 视角）；threat 为整局决策只算一次的威胁图
+  function scoreActionMedium(state, side, action, threat, totalUnrevealed) {
     if (action.kind === 'flip') {
-      // 翻棋信息价值；己方大子已暴露多时则略降（避免继续暴露）
-      return 6 + (Math.random() - 0.5) * 2;
+      // 翻棋价值随暗子数衰减：开局(≥45 暗子)≈7 仍积极，中局≈4.8，残局≈3.4
+      let base = 3 + 4 * Math.min(1, totalUnrevealed / 45);
+      // 有己方大子正被威胁：先处理威胁，翻棋让路
+      if (threat && threat.loss.some((l, i) => {
+        const c = state.board[i];
+        return l >= 45 && c.piece && c.revealed && c.piece.side === side &&
+          C.IMMOBILE.indexOf(c.piece.type) === -1;
+      })) base -= 2;
+      return base + (Math.random() - 0.5) * 2;
     }
     // move
     const from = action.from, to = action.to;
@@ -74,6 +81,10 @@
         // 攻击者死（撞雷等）
         s -= valueOf(p.type) * 1.2;
       }
+      // 炸弹节制：别拿炸弹换小子（旗与司令/军长/师长≥60 除外）
+      if (p.type === 'bomb' && d.type !== 'flag' && valueOf(d.type) < 60) {
+        s -= (60 - valueOf(d.type)) * 0.6;
+      }
     } else {
       // 空走：机动性 + 上铁路奖励 + 进入空行营（安全）小奖励
       if (B.terrainAt(to) === 'railway') s += 1;
@@ -83,6 +94,9 @@
     // 1-ply 安全：落点是否被对方更强子吃到
     const danger = exposureDanger(state, side, from, to, p);
     s -= danger;
+    // ★撤离收益：被威胁的子任何走法都 +D(from)，使"逃命"能与别处的小捕获竞争
+    // （D(from) 是子内常量偏移，不改变"往哪逃"——那由 D_to 与行营奖励决定）
+    if (threat) s += dangerAt(threat, from);
     // 暴露己方大子（离开行营）的惩罚
     if (B.terrainAt(from) === 'camp' && valueOf(p.type) >= 45) s -= 4;
     return s + (Math.random() - 0.5) * 0.5;
@@ -119,12 +133,55 @@
     return danger;
   }
 
+  // ---- 原位威胁扫描（medium 的撤离收益与 evaluate 的威胁扣分共用）----
+  // 在**当前局面、不挪子**的前提下，扫 side 之敌方的全部已翻子的合法走法，
+  // 累计 side 方每个占格若被攻击的最大交换损失。
+  // 只读 revealed（不作弊）；行营免疫由 legalMoves 天然排除。
+  // 语义：仅用于"原位威胁"。落点危险 D_to 必须继续用 exposureDanger（它建模让位后的铁路贯穿，此处会低估）。
+  // 返回 { loss: number[60], attacker: (string|null)[60], enemyMoves: number }
+  function threatMapOf(state, side) {
+    const enemy = C.opposite(side);
+    const loss = new Array(C.CELL_COUNT).fill(0);
+    const attacker = new Array(C.CELL_COUNT).fill(null);
+    let enemyMoves = 0;
+    for (let i = 0; i < state.board.length; i++) {
+      const cell = state.board[i];
+      if (!cell.piece || !cell.revealed || cell.piece.side !== enemy) continue;
+      const ms = R.legalMoves(state, i);
+      enemyMoves += ms.length;
+      for (const m of ms) {
+        const t = state.board[m.to];
+        if (!t.piece || t.piece.side !== side) continue; // 空格走法 / 非攻击我方
+        const res = R.resolveBattle(cell.piece, t.piece);
+        let l;
+        if (res.to && res.to.piece && res.to.piece.side === side) {
+          l = 0; // 敌攻击者死、我子存活 → 无损失
+        } else if (res.to === null) {
+          l = Math.max(0, valueOf(t.piece.type) - valueOf(cell.piece.type)); // 同归：净损失
+        } else {
+          l = valueOf(t.piece.type); // 我子被吃
+        }
+        if (l > loss[m.to]) { loss[m.to] = l; attacker[m.to] = cell.piece.type; }
+      }
+    }
+    return { loss, attacker, enemyMoves };
+  }
+
+  // O(1) 查表：threat 下 index 格的原位威胁值
+  function dangerAt(threat, index) { return threat.loss[index]; }
+
   function chooseMedium(state, side) {
     const actions = enumerateActions(state, side);
     if (!actions.length) return null;
+    const threat = threatMapOf(state, side); // 整局决策只算一次，供撤离收益查表
+    let totalUnrevealed = 0;
+    for (let i = 0; i < state.board.length; i++) {
+      const c = state.board[i];
+      if (c.piece && !c.revealed) totalUnrevealed++;
+    }
     let best = null, bestS = -Infinity;
     for (const a of actions) {
-      const s = scoreActionMedium(state, side, a);
+      const s = scoreActionMedium(state, side, a, threat, totalUnrevealed);
       if (s > bestS) { bestS = s; best = a; }
     }
     return best;
@@ -137,8 +194,18 @@
 
   function BudgetExceeded() {}
   function checkBudget() {
+    if (!_deadline) return; // 不在搜索中（如外部直接调 evaluate）→ 不设限
     _nodes++;
     if (_nodes > NODE_BUDGET || Date.now() > _deadline) throw new BudgetExceeded();
+  }
+
+  // 威胁扣分权重（分层；工兵在敌方尚有雷时按拔雷资产抬高）
+  function threatWeight(type, enemyMinesLeft) {
+    if (type === 'engineer' && enemyMinesLeft > 0) return 0.5;
+    const v = valueOf(type);
+    if (v >= 60) return 0.6;   // 司令/军长/师长
+    if (v >= 30) return 0.35;  // 旅长/团长/炸弹
+    return 0.15;               // 营长/连长/排长
   }
 
   // 估值（从 side 视角）
@@ -150,6 +217,9 @@
     if (state.minesLost) {
       score += (state.minesLost[enemy] - state.minesLost[side]) * 20;
     }
+    // 威胁扣分：threatMapOf 单遍零拷贝扫描（替换旧版"每个大子一次 exposureDanger 深拷贝"，约 3× 提速、覆盖放宽到全部可动子）
+    const threat = threatMapOf(state, side);
+    const enemyMinesLeft = state.minesLost ? (C.MINES_PER_SIDE - state.minesLost[enemy]) : C.MINES_PER_SIDE;
     const { rem, totalUnrevealed } = remainingDistribution(state);
     for (let i = 0; i < state.board.length; i++) {
       const cell = state.board[i];
@@ -157,9 +227,11 @@
       if (cell.revealed) {
         const sign = cell.piece.side === side ? 1 : -1;
         score += sign * valueOf(cell.piece.type);
-        // 暴露风险：己方大子在非行营且可达则扣分
-        if (cell.piece.side === side && B.terrainAt(i) !== 'camp' && valueOf(cell.piece.type) >= 45) {
-          score -= exposureDanger(state, side, i, i, cell.piece) * 0.5;
+        // 己方受威胁的可动子（非行营、非雷/旗）按分层权重扣分
+        if (cell.piece.side === side && B.terrainAt(i) !== 'camp' &&
+            C.IMMOBILE.indexOf(cell.piece.type) === -1) {
+          const l = dangerAt(threat, i);
+          if (l > 0) score -= l * threatWeight(cell.piece.type, enemyMinesLeft);
         }
       } else {
         // 未翻子：按剩余分布算期望（归属未知，简化对半归属两方）
@@ -173,6 +245,46 @@
           }
           score += ev * 0.5; // 不确定折扣
         }
+      }
+    }
+    // ---- 机动性 + 工兵拔雷：己方已翻可动子单遍 legalMoves（副产物复用）----
+    let ownMoves = 0, engineerClears = 0;
+    for (let i = 0; i < state.board.length; i++) {
+      const cell = state.board[i];
+      if (!cell.piece || !cell.revealed || cell.piece.side !== side) continue;
+      if (C.IMMOBILE.indexOf(cell.piece.type) !== -1) continue;
+      const ms = R.legalMoves(state, i);
+      ownMoves += ms.length;
+      if (cell.piece.type === 'engineer' && enemyMinesLeft > 0) {
+        for (const m of ms) {
+          const t = state.board[m.to];
+          if (t.piece && t.piece.side === enemy && t.piece.type === 'mine') { engineerClears++; break; }
+        }
+      }
+    }
+    score += 0.5 * (ownMoves - threat.enemyMoves);
+    score += engineerClears * 6;
+
+    // ---- 军旗防御：仅当己方地雷已被拔（军旗开始 exposed）才触发；只认已翻己旗（不读暗子，不作弊）----
+    if (state.minesLost && state.minesLost[side] > 0) {
+      let flagIdx = -1;
+      for (let i = 0; i < state.board.length; i++) {
+        const c = state.board[i];
+        if (c.piece && c.revealed && c.piece.type === 'flag' && c.piece.side === side) { flagIdx = i; break; }
+      }
+      if (flagIdx >= 0) {
+        const [fr, fc] = B.rc(flagIdx);
+        let near = 0, guards = 0;
+        for (let i = 0; i < state.board.length; i++) {
+          const c = state.board[i];
+          if (!c.piece || !c.revealed || C.IMMOBILE.indexOf(c.piece.type) !== -1) continue;
+          const [pr, pc] = B.rc(i);
+          const dist = Math.abs(pr - fr) + Math.abs(pc - fc);
+          if (c.piece.side === enemy) near += Math.max(0, 5 - dist); // 敌子越近越危险
+          else if (dist <= 1) guards++;                              // 己方贴身护卫
+        }
+        score -= state.minesLost[side] * 1.5 * near;
+        score += Math.min(6, guards * 2);
       }
     }
     return score;
@@ -224,8 +336,43 @@
     if (!s.winner) s.winner = R.checkWinner(s);
   }
 
-  // expectimax：max 节点（side 方选择），flip 动作产生 chance 节点
-  function expectimax(state, side, depth) {
+  // ---- 走法排序（提升剪枝效率与预算内深度完成度）----
+  // threat 非空=根节点精确排序（含逃离桶）；null=深节点廉价静态排序（禁止跑 threatMapOf，否则每节点 ×25 扫爆预算）
+  function actionKey(state, side, action, threat) {
+    if (action.kind === 'flip') return 50000;
+    const from = action.from, to = action.to;
+    const p = state.board[from].piece;
+    const tcell = state.board[to];
+    if (tcell.piece) {
+      const res = R.resolveBattle(p, tcell.piece);
+      if (res.flagCaptured) return 1000000;                                    // 夺旗置顶
+      if (res.to && res.to.piece === p) {                                      // 攻击者存活（含工兵拔雷）：MVV-LVA
+        return 200000 + valueOf(tcell.piece.type) * 16 - valueOf(p.type);
+      }
+      if (res.to === null) return 100000 + valueOf(tcell.piece.type) - valueOf(p.type); // 同归：按交换差
+      return valueOf(tcell.piece.type) - valueOf(p.type) * 2;                  // 攻击者阵亡（撞强/撞雷）：垫底
+    }
+    // 安静走法：被威胁子的逃离优先
+    if (threat) {
+      const d = dangerAt(threat, from);
+      if (d > 0) return 150000 + d + (B.terrainAt(to) === 'camp' ? 1000 : 0);
+    }
+    let k = 10000;
+    if (B.terrainAt(to) === 'camp') k += 2;
+    else if (B.terrainAt(to) === 'railway') k += 1;
+    return k;
+  }
+
+  function orderActions(state, side, actions, threat) {
+    if (actions.length < 2) return actions;
+    return actions
+      .map((a) => ({ a, k: actionKey(state, side, a, threat) }))
+      .sort((x, y) => y.k - x.k)
+      .map((x) => x.a);
+  }
+
+  // expectimax + alpha-beta：max/min 节点按窗口剪枝；flip 动作产生 chance 节点
+  function expectimax(state, side, depth, alpha = -Infinity, beta = Infinity) {
     checkBudget();
     if (state.winner) {
       if (state.winner === 'draw') return 0;
@@ -233,7 +380,7 @@
     }
     if (depth <= 0) return evaluate(state, side);
 
-    const actions = enumerateActions(state, state.turn);
+    const actions = orderActions(state, state.turn, enumerateActions(state, state.turn), null);
     if (!actions.length) {
       return state.turn === side ? -100000 : 100000; // 无棋可走=负
     }
@@ -243,26 +390,30 @@
     if (mover === side) {
       best = -Infinity;
       for (const a of actions) {
-        const v = actionValue(state, a, side, depth);
+        const v = actionValue(state, a, side, depth, alpha, beta);
         if (v > best) best = v;
+        if (best > alpha) alpha = best;
+        if (alpha >= beta) break; // 剪枝
       }
     } else {
       best = Infinity;
       for (const a of actions) {
-        const v = actionValue(state, a, side, depth);
+        const v = actionValue(state, a, side, depth, alpha, beta);
         if (v < best) best = v;
+        if (best < beta) beta = best;
+        if (alpha >= beta) break; // 剪枝
       }
     }
     return best;
   }
 
-  // 单个动作的期望值：move 为确定，flip 为 chance（按剩余分布 top-K 采样）
-  function actionValue(state, action, side, depth) {
+  // 单个动作的期望值：move 为确定（传窗口），flip 为 chance（按剩余分布 top-K 采样，全窗口取精确期望）
+  function actionValue(state, action, side, depth, alpha = -Infinity, beta = Infinity) {
     checkBudget();
     if (action.kind === 'move') {
       const s = clone(state);
       applyOnClone(s, action);
-      return expectimax(s, side, depth - 1);
+      return expectimax(s, side, depth - 1, alpha, beta);
     }
     // flip -> chance 节点
     const { rem, totalUnrevealed } = remainingDistribution(state);
@@ -286,7 +437,8 @@
       s.staleCount = 0;
       s.turn = C.opposite(s.turn);
       s.winner = R.checkWinner(s);
-      exp += p * expectimax(s, side, depth - 1);
+      // chance 子树强制全窗口：截断值参与加权平均会有偏
+      exp += p * expectimax(s, side, depth - 1, -Infinity, Infinity);
     }
     // 归一化（top-K 未覆盖部分用当前估值近似）
     if (weightSum < 1) {
@@ -297,23 +449,43 @@
     return exp;
   }
 
+  const MAX_DEPTH = 8;
+
   function chooseHard(state, side) {
     _nodes = 0; _deadline = Date.now() + TIME_BUDGET_MS;
     try {
       const actions = enumerateActions(state, side);
       if (!actions.length) return null;
-      const DEPTH = 2;
-      let best = null, bestV = -Infinity;
-      for (const a of actions) {
-        const v = actionValue(state, a, side, DEPTH);
-        if (v > bestV) { bestV = v; best = a; }
+      const threat = threatMapOf(state, side);
+      let ordered = orderActions(state, side, actions, threat); // 根节点精确排序
+      let bestSoFar = ordered[0]; // 兜底＝静态最优着：任何情况下都有确定走法，不再回退 medium
+      let lastIterMs = 0;
+      for (let depth = 1; depth <= MAX_DEPTH; depth++) {
+        // 软停：预计本层跑不完剩余时间就不开新深度
+        if (lastIterMs > 0 && Date.now() + lastIterMs * 3 > _deadline) break;
+        const t0 = Date.now();
+        let best = null, bestV = -Infinity;
+        const scores = [];
+        try {
+          for (const a of ordered) {
+            const v = actionValue(state, a, side, depth, bestV, Infinity); // 根窗口：(当前最优, +∞)
+            scores.push({ a, v });
+            if (v > bestV) { bestV = v; best = a; }
+          }
+          bestSoFar = best; // ★ 只有完整跑完的深度才提交
+          ordered = scores.sort((x, y) => y.v - x.v).map((x) => x.a); // best-first 喂下一层
+          lastIterMs = Date.now() - t0;
+        } catch (e) {
+          if (e instanceof BudgetExceeded) return bestSoFar; // ★ 半途中断 → 返回上一层最优根着
+          throw e;
+        }
       }
-      return best;
+      return bestSoFar;
     } catch (e) {
-      if (e instanceof BudgetExceeded) {
-        return chooseMedium(state, side); // 回退普通档
-      }
-      throw e;
+      if (e instanceof BudgetExceeded) return null; // 理论不可达（内层已捕获）
+      return chooseMedium(state, side); // 非预算异常的终极兜底
+    } finally {
+      _deadline = 0; // 搜索结束：解除预算闸，后续直接调 evaluate 不再受限
     }
   }
 
@@ -325,5 +497,6 @@
 
   NS.Junqi.ai = {
     chooseMove, enumerateActions, evaluate, remainingDistribution,
+    threatMapOf, dangerAt, threatWeight,
   };
 })();

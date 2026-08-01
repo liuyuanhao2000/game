@@ -13,6 +13,30 @@ const R = Junqi.rules;
 const AI = Junqi.ai;
 const idx = (r, co) => r * 5 + co;
 
+// ---- 确定性局面辅助（空格手摆：暗子=0、无 flip、无 chance 噪声）----
+function emptyState(turn) {
+  const st = S.createInitialState();
+  for (let i = 0; i < st.board.length; i++) st.board[i] = { piece: null, revealed: false };
+  st.sidesAssigned = true;
+  st.playerSide = 'red'; st.aiSide = 'blue';
+  st.turn = turn;
+  return st;
+}
+function place(st, r, c, type, side, revealed = true) {
+  st.board[idx(r, c)] = { piece: { type, rank: C.PIECES[type].rank, side }, revealed };
+}
+// side 方所有已翻子的攻击目标集合（只取占格目标=可攻击格；空格落点不算"攻击集"）
+function attackSet(st, side) {
+  const s = new Set();
+  for (let i = 0; i < st.board.length; i++) {
+    const c = st.board[i];
+    if (c.piece && c.revealed && c.piece.side === side) {
+      for (const m of R.legalMoves(st, i)) if (st.board[m.to].piece) s.add(m.to);
+    }
+  }
+  return s;
+}
+
 function midgameState() {
   // 构造一个中等局面：部分翻开、部分未翻
   // 翻开规则是确定性的（不依赖 Math.random），保证测试可复现；初始发牌随机不影响断言
@@ -127,4 +151,140 @@ test('ai: Σrem === totalUnrevealed holds throughout a simulated game', () => {
     check();
   }
   assert.ok(plies > 0, 'should have played some plies');
+});
+
+// ============ T6：threatMapOf 原位威胁扫描 ============
+test('ai: threatMapOf measures in-place threat and camp immunity', () => {
+  // 红司令 (2,0) 威胁蓝军长 (3,0)（同在 col0 铁路，相邻）
+  const st = emptyState('blue');
+  place(st, 2, 0, 'commander', 'red');
+  place(st, 3, 0, 'general', 'blue');
+  const th = AI.threatMapOf(st, 'blue');
+  assert.strictEqual(th.loss[idx(3, 0)], 80, '蓝军长被红司令吃 → 损失 valueOf(general)=80');
+  assert.strictEqual(th.attacker[idx(3, 0)], 'commander');
+  assert.ok(th.enemyMoves > 0, '敌方走法数应为正');
+  // 行营免疫：蓝子进 (2,1) 行营后无威胁
+  const st2 = emptyState('blue');
+  place(st2, 2, 0, 'commander', 'red');
+  place(st2, 2, 1, 'general', 'blue'); // [2,1] 是行营
+  const th2 = AI.threatMapOf(st2, 'blue');
+  assert.strictEqual(th2.loss[idx(2, 1)], 0, '行营内不可被攻击 → 威胁为 0');
+});
+
+test('ai: threatMapOf exchange values (同归与攻击者死)', () => {
+  // 红炸弹 (1,1) 与蓝军长 (1,0) 相邻 → 同归：损失 = 80 - 35 = 45
+  const st = emptyState('blue');
+  place(st, 1, 1, 'bomb', 'red');
+  place(st, 1, 0, 'general', 'blue');
+  const th = AI.threatMapOf(st, 'blue');
+  assert.strictEqual(th.loss[idx(1, 0)], 45, '炸弹同归：valueOf(军长)-valueOf(炸弹)=45');
+  // 红排长 (5,2) 撞蓝司令 (5,3)：攻击者死 → 我方无损失 0
+  const st2 = emptyState('blue');
+  place(st2, 5, 2, 'platoon', 'red');
+  place(st2, 5, 3, 'commander', 'blue');
+  const th2 = AI.threatMapOf(st2, 'blue');
+  assert.strictEqual(th2.loss[idx(5, 3)], 0, '敌方攻击者必死 → 我方损失 0');
+});
+
+// ============ T1：medium 被威胁大子逃入相邻行营 ============
+test('ai: medium flees threatened big piece into a camp (T1)', () => {
+  const st = emptyState('blue');
+  place(st, 3, 0, 'general', 'blue');    // 蓝军长被威胁
+  place(st, 2, 0, 'commander', 'red');   // 红司令正下方威胁 (3,0)（col0 铁路相邻）
+  place(st, 8, 2, 'platoon', 'blue');    // 诱饵：蓝排长（行营子）可吃红工兵 +22
+  place(st, 8, 3, 'engineer', 'red');
+  const a = AI.chooseMove(st, C.DIFFICULTY.MEDIUM, 'blue');
+  assert.ok(a && a.kind === 'move', 'should choose a move');
+  assert.strictEqual(a.from, idx(3, 0), '必须移动被威胁的军长，而非坐视（修复前会去吃诱饵）');
+  // (3,0) 斜邻两个行营 (2,1)/(4,1) 同分，任一皆正确
+  assert.ok([idx(2, 1), idx(4, 1)].includes(a.to),
+    '军长应逃入相邻行营（免疫），实际 to=' + a.to);
+});
+
+// ============ T2：hard 被威胁大子逃入相邻行营（搜索重构回归锁）============
+test('ai: hard flees threatened big piece into a camp (T2)', () => {
+  const st = emptyState('blue');
+  place(st, 3, 0, 'general', 'blue');
+  place(st, 2, 0, 'commander', 'red');
+  place(st, 8, 2, 'platoon', 'blue');
+  place(st, 8, 3, 'engineer', 'red');
+  const t0 = Date.now();
+  const a = AI.chooseMove(st, C.DIFFICULTY.HARD, 'blue');
+  assert.ok(Date.now() - t0 < 10000, 'hard 应远快于 10s');
+  assert.ok(a && a.kind === 'move' && a.from === idx(3, 0), 'hard 必须移动被威胁的军长');
+  assert.ok([idx(2, 1), idx(4, 1)].includes(a.to), 'hard 逃入行营，实际 to=' + (a && a.to));
+});
+
+// ============ T5：evaluate 威胁项（提权 + 覆盖全部可动子）============
+// 控制变量手法：己方子同格，只换威胁源位置（近=有威胁 / 远=无威胁），机动性差互相抵消
+test('ai: evaluate threat term — weighted & covers all movable pieces (T5)', () => {
+  // 大子：蓝军长同位 (3,0)，威胁源 (2,0) vs 无威胁 (2,3) → 差 ≈ 80×0.6 = 48（旧版仅 80×0.5 = 40）
+  const a1 = emptyState('blue'); place(a1, 3, 0, 'general', 'blue'); place(a1, 2, 0, 'commander', 'red');
+  const b1 = emptyState('blue'); place(b1, 3, 0, 'general', 'blue'); place(b1, 2, 3, 'commander', 'red');
+  const d1 = AI.evaluate(b1, 'blue') - AI.evaluate(a1, 'blue');
+  assert.ok(d1 > 40, '大子威胁扣分应提至 ≈48，实际 ' + d1.toFixed(1));
+  // 分层权重（白盒）：覆盖小子与工兵拔雷资产
+  assert.strictEqual(AI.threatWeight('general', 3), 0.6, '大子 0.6');
+  assert.strictEqual(AI.threatWeight('platoon', 3), 0.15, '小子也覆盖（旧版 <45 不扣分）');
+  assert.strictEqual(AI.threatWeight('engineer', 3), 0.5, '敌方有雷时工兵按拔雷资产抬高');
+  assert.strictEqual(AI.threatWeight('engineer', 0), 0.15, '敌雷拔光后工兵回落小子权重');
+});
+
+// ============ evaluate 机动性 / 军旗防御 / 工兵拔雷 ============
+test('ai: evaluate mobility — more legal moves scores higher', () => {
+  // 同是无敌无威胁：蓝排长居铁路枢纽 (5,2) 走法多 vs 角落 (0,0) 走法少
+  const a = emptyState('blue'); place(a, 5, 2, 'platoon', 'blue');
+  const b = emptyState('blue'); place(b, 0, 0, 'platoon', 'blue');
+  const d = AI.evaluate(a, 'blue') - AI.evaluate(b, 'blue');
+  assert.ok(d > 1, '机动性高应加分，实际 ' + d.toFixed(2));
+});
+
+test('ai: evaluate flag defense — enemy near own flag penalized once mines lost', () => {
+  // 蓝旗已翻 (11,2)：红子贴旗 (10,2) vs 红子远处 (0,0)
+  const a = emptyState('blue'); place(a, 11, 2, 'flag', 'blue'); place(a, 10, 2, 'platoon', 'red');
+  const b = emptyState('blue'); place(b, 11, 2, 'flag', 'blue'); place(b, 0, 0, 'platoon', 'red');
+  a.minesLost.blue = 1; b.minesLost.blue = 1;
+  const d = AI.evaluate(b, 'blue') - AI.evaluate(a, 'blue');
+  assert.ok(d > 3, '雷破后敌子逼近己旗应被惩罚，实际 ' + d.toFixed(2));
+  // 同一对局面但雷未破：防御项不触发 → 惩罚应显著变小（差值即纯防御项贡献）
+  const a0 = emptyState('blue'); place(a0, 11, 2, 'flag', 'blue'); place(a0, 10, 2, 'platoon', 'red');
+  const b0 = emptyState('blue'); place(b0, 11, 2, 'flag', 'blue'); place(b0, 0, 0, 'platoon', 'red');
+  const d0 = AI.evaluate(b0, 'blue') - AI.evaluate(a0, 'blue');
+  assert.ok(d - d0 > 3, '惩罚应来自防御项（雷破比雷未破多扣 ≥3），实际差 ' + (d - d0).toFixed(2));
+});
+
+test('ai: evaluate engineer mine-clearing incentive', () => {
+  // 蓝工兵能立即吃红已翻雷 (1,1) vs 雷在远处 (3,3) 吃不到
+  const a = emptyState('blue'); place(a, 1, 0, 'engineer', 'blue'); place(a, 1, 1, 'mine', 'red');
+  const b = emptyState('blue'); place(b, 1, 0, 'engineer', 'blue'); place(b, 3, 3, 'mine', 'red');
+  const d = AI.evaluate(a, 'blue') - AI.evaluate(b, 'blue');
+  assert.ok(d > 3, '工兵能立即拔雷应加分，实际 ' + d.toFixed(2));
+});
+
+// ============ T3：medium 不主动送大子给更强者（铁路贯穿威胁）============
+test('ai: medium moves threatened general to safety instead of bait capture (T3)', () => {
+  const st = emptyState('blue');
+  place(st, 5, 2, 'general', 'blue');    // 蓝军长：被红司令沿 R5 铁路贯穿威胁
+  place(st, 5, 4, 'commander', 'red');
+  place(st, 8, 2, 'company', 'blue');    // 诱饵：蓝连长（行营子）可吃红工兵 +22
+  place(st, 8, 3, 'engineer', 'red');
+  const redAttacks = attackSet(st, 'red');
+  const a = AI.chooseMove(st, C.DIFFICULTY.MEDIUM, 'blue');
+  assert.ok(a && a.kind === 'move' && a.from === idx(5, 2),
+    '必须移动被威胁的军长（修复前会去吃诱饵），got ' + JSON.stringify(a));
+  assert.ok(!redAttacks.has(a.to), '落点须安全（不在红方攻击集内），to=' + a.to);
+});
+
+// ============ T4：工兵有拔雷机会就去吃雷（medium + hard）============
+test('ai: engineer takes revealed mine when available (T4)', () => {
+  const st = emptyState('blue');
+  place(st, 10, 0, 'engineer', 'blue');
+  place(st, 10, 1, 'mine', 'red');   // 已翻地雷，工兵可立即挖
+  place(st, 11, 4, 'flag', 'red');
+  const m = AI.chooseMove(st, C.DIFFICULTY.MEDIUM, 'blue');
+  assert.ok(m && m.kind === 'move' && m.from === idx(10, 0) && m.to === idx(10, 1),
+    'medium 工兵应挖雷，got ' + JSON.stringify(m));
+  const h = AI.chooseMove(st, C.DIFFICULTY.HARD, 'blue');
+  assert.ok(h && h.kind === 'move' && h.from === idx(10, 0) && h.to === idx(10, 1),
+    'hard 工兵应挖雷，got ' + JSON.stringify(h));
 });
