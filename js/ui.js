@@ -449,30 +449,37 @@
       lastmoveEl.className = 'lastmove' + (text ? '' : ' empty');
     }
 
-    // 结算浮层：终局后延迟弹出（先让最后一步的动画播完）
+    // 结算浮层：终局后延迟弹出（先让最后一步的动画播完），印章按胜负切换
     const go = (typeof document !== 'undefined') && document.getElementById('gameover');
     if (go) {
       if (state.winner) {
         if (!gameoverShown) {
           gameoverShown = true;
+          const kind = state.winner === 'draw' ? 'draw'
+            : (state.winner === state.playerSide ? 'win' : 'lose');
+          go.dataset.result = kind;
+          const stampEl = document.getElementById('go-stamp-char');
+          if (stampEl) stampEl.textContent = kind === 'win' ? '勝' : kind === 'lose' ? '敗' : '和';
           const tEl = document.getElementById('gameover-title');
           const sEl = document.getElementById('gameover-sub');
-          if (state.winner === 'draw') {
+          if (kind === 'draw') {
             tEl.textContent = '和局';
             sEl.textContent = '连续 40 回合无吃子、无翻棋';
           } else {
-            const win = state.winner === state.playerSide;
-            tEl.textContent = win ? '🎉 你赢了' : 'AI 获胜';
+            tEl.textContent = kind === 'win' ? '你赢了' : 'AI 获胜';
             const lm = state.lastMove;
             sEl.textContent = (lm && lm.battle && lm.battle.outcome === 'flag')
               ? '军旗被拔'
               : '对方无路可走';
           }
-          setTimeout(() => { if (state.winner) go.classList.remove('hidden'); }, 700);
+          setTimeout(() => {
+            if (state.winner) { go.classList.remove('hidden'); goStartFx(kind); }
+          }, 700);
         }
       } else {
         gameoverShown = false;
         go.classList.add('hidden');
+        goStopFx();
       }
     }
   }
@@ -491,6 +498,98 @@
     t.className = 'toast show';
     clearTimeout(t._timer);
     t._timer = setTimeout(() => { t.className = 'toast'; }, 1500);
+  }
+
+  // ---- 结算庆祝粒子（canvas：胜利=金红纸屑雨 / 败=灰蓝缓落 / 和=金尘）----
+  // 自清理：浮层隐藏即停帧；尊重 prefers-reduced-motion（直接跳过）
+  const GO_COLORS = {
+    win: ['#ffd166', '#e8503f', '#ffe9b0', '#f0a39c', '#ff9d5c'],
+    lose: ['#7a93ab', '#54718c', '#9fb6c6'],
+    draw: ['#cfa254', '#ffe9b0', '#a98d5a'],
+  };
+  let goRaf = 0, goParts = [], goFxStart = 0;
+
+  function goBurst(kind, n, w, h) {
+    const colors = GO_COLORS[kind] || GO_COLORS.win;
+    const fromTop = kind === 'win';
+    for (let i = 0; i < n; i++) {
+      goParts.push({
+        x: w * 0.5 + (Math.random() - 0.5) * w * 0.8,
+        y: fromTop ? -12 - Math.random() * h * 0.25 : h * (0.25 + Math.random() * 0.25),
+        vx: (Math.random() - 0.5) * 2.2,
+        vy: fromTop ? 0.8 + Math.random() * 2.4 : 0.2 + Math.random() * 0.6,
+        rot: Math.random() * Math.PI * 2,
+        vrot: (Math.random() - 0.5) * 0.22,
+        size: 3 + Math.random() * 6,
+        color: colors[(Math.random() * colors.length) | 0],
+        ribbon: Math.random() < (kind === 'win' ? 0.6 : 0.2),
+        phase: Math.random() * Math.PI * 2,
+        born: Date.now(),
+        life: 3800 + Math.random() * 2600,
+      });
+    }
+  }
+
+  function goLoop() {
+    goRaf = requestAnimationFrame(goLoop);
+    const cv = document.getElementById('go-fx');
+    const go = document.getElementById('gameover');
+    if (!cv || !go || go.classList.contains('hidden') || typeof cv.getContext !== 'function') {
+      goStopFx();
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const w = cv.clientWidth, h = cv.clientHeight;
+    if (!w || !h) return;
+    if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const kind = go.dataset.result || 'win';
+    const t = Date.now() - goFxStart;
+    // 前 1.5s 持续补充粒子（喜庆感），6.5s 内偶尔小股补花，之后只让残余飘落
+    if (t < 1500 && goParts.length < 150) goBurst(kind, 7, w, h);
+    else if (t < 6500 && goParts.length < 40 && Math.random() < 0.06) goBurst(kind, 12, w, h);
+    const grav = kind === 'win' ? 0.085 : 0.025;
+    const now = Date.now();
+    for (let i = goParts.length - 1; i >= 0; i--) {
+      const p = goParts[i];
+      const age = now - p.born;
+      if (age > p.life || p.y > h + 24) { goParts.splice(i, 1); continue; }
+      p.phase += 0.07;
+      p.x += p.vx + Math.sin(p.phase) * 0.7; // 飘落摆动
+      p.y += p.vy;
+      p.vy = Math.min(p.vy + grav, 3.2);
+      p.rot += p.vrot;
+      const fade = age > p.life - 900 ? (p.life - age) / 900 : 1;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.globalAlpha = 0.9 * fade;
+      ctx.fillStyle = p.color;
+      if (p.ribbon) ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2); // 彩带
+      else { ctx.beginPath(); ctx.arc(0, 0, p.size / 2.4, 0, Math.PI * 2); ctx.fill(); } // 金点
+      ctx.restore();
+    }
+  }
+
+  function goStartFx(kind) {
+    if (reduceMotion || typeof requestAnimationFrame !== 'function') return;
+    goStopFx();
+    goParts = [];
+    goFxStart = Date.now();
+    const cv = document.getElementById('go-fx');
+    if (cv && cv.clientWidth && cv.clientHeight) goBurst(kind, 90, cv.clientWidth, cv.clientHeight);
+    goRaf = requestAnimationFrame(goLoop);
+  }
+
+  function goStopFx() {
+    if (goRaf) { cancelAnimationFrame(goRaf); goRaf = 0; }
+    goParts = [];
+    const cv = document.getElementById('go-fx');
+    if (cv && typeof cv.getContext === 'function') {
+      try { cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); } catch (e) { /* 无画布环境忽略 */ }
+    }
   }
 
   NS.Junqi.ui = {

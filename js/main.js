@@ -10,7 +10,7 @@
   const UI = NS.Junqi.ui;
 
   let state = null;
-  let difficulty = C.DIFFICULTY.MEDIUM;
+  let difficulty = C.DIFFICULTY.HARD; // 默认困难档（下拉框默认项与此一致）
   let aiTimer = null;
   // UI 瞬态（选中/落点）不挂在游戏状态上，保持 state 纯粹、可序列化
   let selIndex = null;

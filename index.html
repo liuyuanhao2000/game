@@ -14,8 +14,8 @@
         <label>难度：
           <select id="difficulty">
             <option value="easy">简单</option>
-            <option value="medium" selected>普通</option>
-            <option value="hard">困难</option>
+            <option value="medium">普通</option>
+            <option value="hard" selected>困难</option>
           </select>
         </label>
         <button id="restart">重新开局</button>
@@ -50,9 +50,11 @@
       </div>
     </div>
 
-    <!-- 结算浮层（终局后延迟弹出）-->
-    <div id="gameover" class="gameover hidden" role="dialog" aria-modal="true" aria-labelledby="gameover-title">
+    <!-- 结算浮层（终局后延迟弹出；胜=印章「勝」+ 金光 + 纸屑雨）-->
+    <div id="gameover" class="gameover hidden" role="dialog" aria-modal="true" aria-labelledby="gameover-title" data-result="win">
+      <div class="go-rays" aria-hidden="true"></div>
       <div class="gameover-card">
+        <div class="go-stamp" aria-hidden="true"><span id="go-stamp-char">勝</span></div>
         <div class="gameover-title" id="gameover-title">对局结束</div>
         <div class="gameover-sub" id="gameover-sub"></div>
         <div class="gameover-actions">
@@ -60,6 +62,7 @@
           <button id="gameover-view">回顾棋盘</button>
         </div>
       </div>
+      <canvas id="go-fx" class="go-fx" aria-hidden="true"></canvas>
     </div>
   </div>
 
