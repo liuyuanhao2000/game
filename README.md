@@ -26,6 +26,21 @@ python3 -m http.server 8000
 # 浏览器访问 http://localhost:8000
 ```
 
+## 桌面版（Electron 打包）
+
+想发给别人当桌面程序玩（无需浏览器/服务器）：
+
+```bash
+npm install            # 安装 electron 开发依赖（仅打包需要，游戏本体零依赖不变）
+npm start              # 本机开发运行（Linux 需图形环境）
+npm run dist:win       # 构建 Windows x64 版 → dist/军旗翻翻棋-win32-x64/
+```
+
+**分发方式**：把 `dist/军旗翻翻棋-win32-x64` 整个文件夹 zip 发给对方，解压后双击 `军旗翻翻棋.exe` 即玩，无需安装。
+
+- 首次运行 Windows 可能弹 SmartScreen「未知发布者」提示（未购买代码签名证书的正常现象），点「更多信息 → 仍要运行」即可。
+- 首版使用 Electron 默认图标；如需自定义：把 `desktop/icon.ico` 备好，在 Windows 上构建时加 `--icon=desktop/icon.ico`（Linux 宿主换 Windows 图标需安装 wine）。
+
 经 HTTP 部署（如 `./run.sh`）时，困难/大师档 AI 的思考在后台线程（Web Worker）进行，AI 思考期间页面不冻屏、动画照常播放；`file://` 直接打开时自动降级为同步思考，游戏行为完全一致。
 
 ## 测试
