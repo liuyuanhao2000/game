@@ -43,6 +43,15 @@ npm run dist:win       # 构建 Windows x64 版 → dist/军旗翻翻棋-win32-x
 
 经 HTTP 部署（如 `./run.sh`）时，困难/大师档 AI 的思考在后台线程（Web Worker）进行，AI 思考期间页面不冻屏、动画照常播放；`file://` 直接打开时自动降级为同步思考，游戏行为完全一致。
 
+## 安卓版（Capacitor 打包）
+
+```bash
+npm run android:sync    # 改完游戏代码后同步到 android/ 工程
+npm run dist:apk        # 构建签名 release APK（需先配置签名，见指南）
+```
+
+完整步骤（环境准备、`cap add`、签名密钥、图标、常见问题）见 [安卓构建指南.md](安卓构建指南.md)。Capacitor WebView 内 Web Worker 正常可用，AI 思考同样不冻屏。
+
 ## 测试
 
 规则/状态/AI 为纯逻辑，用 Node 内置测试框架（需 Node ≥ 18，`node:test`）：

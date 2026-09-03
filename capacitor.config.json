@@ -1,0 +1,8 @@
+{
+  "appId": "com.yhliu.junqi",
+  "appName": "军旗翻翻棋",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}

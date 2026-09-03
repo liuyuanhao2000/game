@@ -7,7 +7,13 @@
   "scripts": {
     "test": "node --test tests/rules.test.js tests/state.test.js tests/ai.test.js tests/ui.test.js tests/sfx.test.js",
     "start": "electron .",
-    "dist:win": "electron-packager . 军旗翻翻棋 --platform=win32 --arch=x64 --out=dist --overwrite --app-version=1.0.3 --ignore=\"^/(dist|docs|tests|scripts|desktop/make-icon\\.js|\\.claude|\\.git|plans)\""
+    "dist:win": "electron-packager . 军旗翻翻棋 --platform=win32 --arch=x64 --out=dist --overwrite --app-version=1.0.3 --ignore=\"^/(dist|docs|tests|scripts|desktop/make-icon\\.js|\\.claude|\\.git|plans|www|android)\"",
+    "stage:web": "scripts/stage-web.sh",
+    "android:add": "npm run stage:web && npx cap add android",
+    "android:sync": "npm run stage:web && npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:run": "npm run stage:web && npx cap run android",
+    "dist:apk": "npm run stage:web && npx cap sync android && cd android && ./gradlew assembleRelease"
   },
   "engines": {
     "node": ">=18"
