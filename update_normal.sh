@@ -15,4 +15,7 @@ else
   git commit -m "$msg"
 fi
 
+# 先拉取远端改动（rebase 到本地提交之上，避免多余 merge commit），再推送
+git pull --rebase
+
 git push
