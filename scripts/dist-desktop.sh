@@ -3,8 +3,9 @@
 # 桌面版打包脚本（Electron，Windows / Linux）
 #
 # 用法：
-#   scripts/dist-desktop.sh              # 打 Windows x64（默认，等价于 npm run dist:win）
-#   scripts/dist-desktop.sh linux        # 打 Linux x64
+#   scripts/dist-desktop.sh              # 默认打 Windows x64 + Linux x64
+#   scripts/dist-desktop.sh win          # 只打 Windows x64
+#   scripts/dist-desktop.sh linux        # 只打 Linux x64
 #   scripts/dist-desktop.sh win linux    # 两个都打
 #   scripts/dist-desktop.sh --dev        # 不打包，只补装本机运行用的 electron 二进制（npm start 用）
 #
@@ -41,9 +42,9 @@ for arg in "$@"; do
   esac
 done
 
-# 没指定平台时默认只打 Windows（与 dist:win 行为一致）
+# 没指定平台时默认打 Windows + Linux
 if [ ${#platforms[@]} -eq 0 ] && [ "$dev_only" -eq 0 ]; then
-  platforms+=(win32)
+  platforms+=(win32 linux)
 fi
 
 # 1. 安装依赖（已装则跳过）
