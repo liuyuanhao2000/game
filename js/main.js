@@ -1,5 +1,6 @@
 // 军旗翻翻棋 — 入口/粘合层
-// 人类提交动作 → state 更新 → 若轮到 AI 调 ai.chooseMove → 再更新 → 渲染。
+// 人类提交动作 → state 更新 → 若轮到 AI 方调 ai.chooseMove → 再更新 → 渲染。
+// mode='ai' 人机对战 | mode='pvp' 双人同屏（操作者由 state.controllers 标注）
 ;(function () {
   const NS = (typeof window !== 'undefined') ? window : globalThis;
   NS.Junqi = NS.Junqi || {};
@@ -11,6 +12,7 @@
   const SFX = NS.Junqi.sfx;
 
   let state = null;
+  let mode = 'ai';        // 'ai'=人机 | 'pvp'=双人同屏；模式选择弹窗设定
   let difficulty = C.DIFFICULTY.HARD; // 默认困难档（下拉框默认项与此一致）
   let aiTimer = null;
   // AI 思考 Worker（后台线程，思考时不冻屏）；不可用时（file:// 等）自动同步降级
@@ -36,7 +38,7 @@
   }
 
   function start() {
-    state = STATE.createInitialState();
+    state = STATE.createInitialState({ mode });
     state.onChange = () => UI.render(state);
     const vEl = document.getElementById('version');
     if (vEl) vEl.textContent = 'v' + C.VERSION; // 版本号唯一来源：constants.VERSION
@@ -54,6 +56,8 @@
 
   function setDifficulty(d) { difficulty = d; }
 
+  function setMode(m) { mode = m; }
+
   function reset() {
     if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; }
     thinkId++; // 使 worker 中悬挂的思考结果作废（回来时按 id 检查丢弃）
@@ -63,8 +67,8 @@
 
   function isPlayerTurn() {
     if (state.winner) return false;
-    if (!state.sidesAssigned) return true; // 开局翻棋由人类执行
-    return state.turn === state.playerSide;
+    if (!state.sidesAssigned) return true; // 开局翻棋由人类执行（pvp 下任意一方）
+    return state.controllers[state.turn] === 'human';
   }
 
   function onCellClick(i) {
@@ -78,7 +82,7 @@
       return;
     }
 
-    if (!isPlayerTurn()) { UI.toast('等待 AI 行动'); return; }
+    if (!isPlayerTurn()) { UI.toast(state.mode === 'pvp' ? '等待对方行动' : '等待 AI 行动'); return; }
 
     const cell = state.board[i];
     const hadSel = selIndex !== null;
@@ -98,8 +102,8 @@
       }
     }
 
-    // 选中己方已翻、可移动的子
-    if (cell.piece && cell.revealed && cell.piece.side === state.playerSide) {
+    // 选中当前行动方已翻、可移动的子
+    if (cell.piece && cell.revealed && cell.piece.side === state.turn) {
       if (C.IMMOBILE.indexOf(cell.piece.type) !== -1) {
         UI.toast('该棋子（' + C.PIECES[cell.piece.type].name + '）不可移动');
         clearSel();
@@ -125,7 +129,7 @@
 
     // 有选中时点到「非法目标」（空地 / 不可攻的敌子）→ 格子闪红 + 音效反馈，而非静默
     if (hadSel) {
-      const isEnemy = cell.piece && cell.revealed && cell.piece.side !== state.playerSide;
+      const isEnemy = cell.piece && cell.revealed && cell.piece.side !== state.turn;
       if (!cell.piece || isEnemy) { UI.flashInvalid(i); SFX.play('invalid'); }
     }
     clearSel();
@@ -164,7 +168,9 @@
       const w = state.winner;
       setTimeout(() => {
         if (state.winner !== w) return; // 期间已重开/局面变化 → 不播
-        SFX.play(w === 'draw' ? 'draw' : (w === state.playerSide ? 'win' : 'lose'));
+        if (w === 'draw') { SFX.play('draw'); return; }
+        // 双人：统一奏胜音；人机：人胜奏 win、AI 胜奏 lose
+        SFX.play(state.mode === 'pvp' || state.controllers[w] === 'human' ? 'win' : 'lose');
       }, 350);
     }
   }
@@ -172,7 +178,7 @@
   function scheduleAI() {
     if (aiTimer) clearTimeout(aiTimer);
     if (state.winner) return;
-    if (state.sidesAssigned && state.turn === state.aiSide) {
+    if (state.sidesAssigned && state.controllers[state.turn] === 'ai') {
       aiTimer = setTimeout(runAI, 450); // 给 UI 一点喘息，便于看清上一步
     }
   }
@@ -183,7 +189,7 @@
     ensureWorker();
     if (aiWorker) {
       const id = ++thinkId;
-      aiWorker.postMessage({ type: 'think', id, state: snapshot(state), difficulty, side: state.aiSide });
+      aiWorker.postMessage({ type: 'think', id, state: snapshot(state), difficulty, side: state.turn });
       if (thinkWatchdog) clearTimeout(thinkWatchdog);
       thinkWatchdog = setTimeout(() => {
         aiWorker = null; // 看门狗触发：worker 静默死亡 → 弃用并同步补这一步
@@ -197,7 +203,7 @@
   function runAISync() {
     if (state.winner) return;
     if (!state.sidesAssigned) return;
-    const action = AI.chooseMove(state, difficulty, state.aiSide);
+    const action = AI.chooseMove(state, difficulty, state.turn);
     // 理论不可达：若 AI 方无合法走法，上一步 applyMove 的 checkWinner 已判负，
     // scheduleAI 在 winner 非空时不会调度；此处仅防御性返回。
     if (!action) return;
@@ -226,7 +232,7 @@
 
   // 暴露调试接口
   NS.Junqi.main = {
-    start, setDifficulty, reset,
+    start, setDifficulty, setMode, reset,
     getState: () => state,
     legalMoves: (i) => state ? R.legalMoves(state, i) : [],
   };

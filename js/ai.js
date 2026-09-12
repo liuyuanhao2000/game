@@ -321,7 +321,7 @@
     return {
       board: state.board.map((c) => ({ piece: c.piece ? { ...c.piece } : null, revealed: c.revealed })),
       rows: state.rows, cols: state.cols,
-      turn: state.turn, playerSide: state.playerSide, aiSide: state.aiSide,
+      turn: state.turn, controllers: { red: (state.controllers || {}).red || null, blue: (state.controllers || {}).blue || null },
       sidesAssigned: state.sidesAssigned, winner: state.winner, staleCount: state.staleCount,
       minesLost: { red: state.minesLost.red, blue: state.minesLost.blue },
       captured: Object.assign({}, state.captured || {}),
@@ -337,8 +337,11 @@
       const cell = s.board[action.index];
       cell.revealed = true;
       if (!s.sidesAssigned) {
-        s.playerSide = cell.piece.side; s.aiSide = C.opposite(s.playerSide);
-        s.sidesAssigned = true; s.turn = s.aiSide;
+        // AI 只在人机模式行动：翻出色归人类，另一色归 AI
+        s.controllers = s.controllers || { red: null, blue: null };
+        s.controllers[cell.piece.side] = 'human';
+        s.controllers[C.opposite(cell.piece.side)] = 'ai';
+        s.sidesAssigned = true; s.turn = C.opposite(cell.piece.side);
       } else { s.turn = C.opposite(s.turn); }
       s.staleCount = 0;
       s.winner = R.checkWinner(s);

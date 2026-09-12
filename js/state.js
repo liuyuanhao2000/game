@@ -1,5 +1,5 @@
 // 军旗翻翻棋 — 游戏状态（唯一真源）
-// 持有 board/turn/playerSide/winner/staleCount，暴露 applyMove 等变更方法。
+// 持有 board/turn/controllers/winner/staleCount，暴露 applyMove 等变更方法。
 // 不直接碰 DOM；通过 onChange 回调通知 ui。
 ;(function () {
   const NS = (typeof window !== 'undefined') ? window : globalThis;
@@ -28,7 +28,8 @@
     return arr;
   }
 
-  function createInitialState() {
+  function createInitialState(opts) {
+    const mode = (opts && opts.mode) || 'ai'; // 'ai'=人机 | 'pvp'=双人同屏
     const board = new Array(C.CELL_COUNT);
     for (let i = 0; i < C.CELL_COUNT; i++) board[i] = { piece: null, revealed: false };
     // 随机摆放 50 子；行营格不放棋子（10 个行营格保持空）
@@ -42,9 +43,9 @@
     return {
       board,
       rows: C.ROWS, cols: C.COLS,
-      turn: null,                // 首次翻棋前为 null；人类先行翻棋
-      playerSide: null,          // 首次翻棋确定
-      aiSide: null,
+      mode,                      // 对局模式，供 UI/调度分支
+      turn: null,                // 首次翻棋前为 null；任意可行动方先行翻棋
+      controllers: { red: null, blue: null }, // 每方操作者：'human'|'ai'，首次翻棋确定
       sidesAssigned: false,
       winner: null,
       staleCount: 0,
@@ -98,12 +99,20 @@
       const cell = state.board[i];
       if (!cell.piece || cell.revealed) return false;
       cell.revealed = true;
-      // 首次翻棋定阵营
+      // 首次翻棋定阵营：翻出的颜色归翻棋者
       if (!state.sidesAssigned) {
-        state.playerSide = cell.piece.side;
-        state.aiSide = C.opposite(state.playerSide);
+        const first = cell.piece.side, other = C.opposite(first);
+        if (state.mode === 'pvp') {
+          // 双人同屏：双方都是人类，先翻者执翻出的颜色
+          state.controllers[first] = 'human';
+          state.controllers[other] = 'human';
+        } else {
+          // 人机：翻出色归人，另一色归 AI
+          state.controllers[first] = 'human';
+          state.controllers[other] = 'ai';
+        }
         state.sidesAssigned = true;
-        state.turn = state.aiSide; // 翻棋者（人类）回合结束，轮到 AI
+        state.turn = other; // 翻棋者回合结束，轮到对方
       } else {
         state.turn = C.opposite(state.turn);
       }

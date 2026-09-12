@@ -278,6 +278,23 @@ body {
 }
 .modal-content button:hover { background: #2d5a7d; }
 
+/* 模式选择弹窗 */
+.mode-content { text-align: center; }
+.mode-buttons { display: flex; gap: 12px; margin: 14px 0 6px; flex-wrap: wrap; }
+.mode-btn {
+  flex: 1 1 160px; display: flex; flex-direction: column; gap: 6px; align-items: center;
+  padding: 18px 12px; background: var(--panel-2); color: var(--ink);
+  border: 1px solid #3a6286; border-radius: 12px; cursor: pointer;
+}
+.mode-btn:hover { background: #2d5a7d; border-color: #5a86ad; }
+.mode-name { font-size: 17px; font-weight: 700; }
+.mode-desc { font-size: 12px; opacity: 0.75; }
+.mode-difficulty { display: inline-flex; gap: 6px; align-items: center; margin-top: 8px; font-size: 14px; }
+.mode-difficulty select {
+  background: var(--panel-2); color: var(--ink); border: 1px solid #3a6286;
+  border-radius: 8px; padding: 6px 10px;
+}
+
 /* ---- 交互动画（全部尊重 prefers-reduced-motion）---- */
 .piece-g, .fx-ring, .fx-impact, .fx-ghost { transform-box: fill-box; transform-origin: center; }
 .fx-ring, .fx-impact, .fx-ghost, .fx-label, .fx-invalid { pointer-events: none; }

@@ -18,7 +18,7 @@ function emptyState(turn) {
   const st = S.createInitialState();
   for (let i = 0; i < st.board.length; i++) st.board[i] = { piece: null, revealed: false };
   st.sidesAssigned = true;
-  st.playerSide = 'red'; st.aiSide = 'blue';
+  st.controllers = {red:'human',blue:'ai'};
   st.turn = turn;
   return st;
 }
@@ -42,7 +42,7 @@ function midgameState() {
   // 翻开规则是确定性的（不依赖 Math.random），保证测试可复现；初始发牌随机不影响断言
   const st = S.createInitialState();
   st.sidesAssigned = true;
-  st.playerSide = 'red'; st.aiSide = 'blue'; st.turn = 'blue';
+  st.controllers = {red:'human',blue:'ai'}; st.turn = 'blue';
   let flipped = 0;
   for (let i = 0; i < st.board.length && flipped < 20; i++) {
     if (st.board[i].piece && i % 3 === 0) { st.board[i].revealed = true; flipped++; }
@@ -90,7 +90,7 @@ test('ai: hard takes obvious winning capture', () => {
   for (let i = 0; i < st.board.length; i++) st.board[i] = { piece: null, revealed: false };
   st.board[idx(1,0)] = { piece: { type:'commander', rank:9, side:'blue' }, revealed: true };
   st.board[idx(1,1)] = { piece: { type:'platoon', rank:2, side:'red' }, revealed: true };
-  st.sidesAssigned = true; st.playerSide='red'; st.aiSide='blue'; st.turn='blue';
+  st.sidesAssigned = true; st.controllers={red:'human',blue:'ai'}; st.turn='blue';
   const a = AI.chooseMove(st, C.DIFFICULTY.HARD, 'blue');
   assert.ok(a && a.kind==='move' && a.from===idx(1,0) && a.to===idx(1,1),
     'hard should capture free platoon with commander, got ' + JSON.stringify(a));
@@ -100,14 +100,14 @@ test('ai: hard does not throw on near-empty board', () => {
   const st = S.createInitialState();
   for (let i = 0; i < st.board.length; i++) st.board[i] = { piece: null, revealed: false };
   st.board[idx(1,0)] = { piece: { type:'company', rank:3, side:'blue' }, revealed: true };
-  st.sidesAssigned = true; st.playerSide='red'; st.aiSide='blue'; st.turn='blue';
+  st.sidesAssigned = true; st.controllers={red:'human',blue:'ai'}; st.turn='blue';
   const a = AI.chooseMove(st, C.DIFFICULTY.HARD, 'blue');
   assert.ok(a);
 });
 
 test('ai: capturing a revealed piece must not inflate the hidden distribution', () => {
   const st = S.createInitialState();
-  st.sidesAssigned = true; st.playerSide = 'red'; st.aiSide = 'blue'; st.turn = 'red';
+  st.sidesAssigned = true; st.controllers = {red:'human',blue:'ai'}; st.turn = 'red';
   st.board[idx(1,0)] = { piece: { type:'commander', rank:9, side:'red' }, revealed: true };
   st.board[idx(1,1)] = { piece: { type:'platoon', rank:2, side:'blue' }, revealed: true };
   const before = AI.remainingDistribution(st).rem['platoon:blue'];
@@ -119,7 +119,7 @@ test('ai: capturing a revealed piece must not inflate the hidden distribution', 
 
 test('ai: remainingDistribution sums to the number of unrevealed cells after a capture', () => {
   const st = S.createInitialState();
-  st.sidesAssigned = true; st.playerSide = 'red'; st.aiSide = 'blue'; st.turn = 'red';
+  st.sidesAssigned = true; st.controllers = {red:'human',blue:'ai'}; st.turn = 'red';
   st.board[idx(1,0)] = { piece: { type:'commander', rank:9, side:'red' }, revealed: true };
   st.board[idx(1,1)] = { piece: { type:'platoon', rank:2, side:'blue' }, revealed: true };
   S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
@@ -133,7 +133,7 @@ test('ai: remainingDistribution sums to the number of unrevealed cells after a c
 
 test('ai: Σrem === totalUnrevealed holds throughout a simulated game', () => {
   const st = S.createInitialState();
-  st.sidesAssigned = true; st.playerSide = 'red'; st.aiSide = 'blue'; st.turn = 'red';
+  st.sidesAssigned = true; st.controllers = {red:'human',blue:'ai'}; st.turn = 'red';
   let plies = 0;
   const check = () => {
     const { rem, totalUnrevealed } = AI.remainingDistribution(st);

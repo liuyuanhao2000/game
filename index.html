@@ -12,7 +12,7 @@
       <h1>军旗翻翻棋</h1>
       <span class="version" id="version" title="版本号">v1.0.0</span>
       <div class="controls">
-        <label>难度：
+        <label id="difficulty-wrap">难度：
           <select id="difficulty">
             <option value="easy">简单</option>
             <option value="medium">普通</option>
@@ -21,6 +21,7 @@
           </select>
         </label>
         <button id="sfx-toggle" title="音效开关">🔊 音效</button>
+        <button id="switch-mode" title="切换对战模式">换模式</button>
         <button id="restart">重新开局</button>
         <button id="rules-btn">规则</button>
       </div>
@@ -75,12 +76,37 @@
       </aside>
     </div>
 
+    <!-- 模式选择弹窗（开局必选；「换模式」按钮可再次打开）-->
+    <div id="mode-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="mode-title">
+      <div class="modal-content mode-content">
+        <h2 id="mode-title">选择对战模式</h2>
+        <div class="mode-buttons">
+          <button id="mode-ai" class="mode-btn">
+            <span class="mode-name">🤖 人机对战</span>
+            <span class="mode-desc">与 AI 对弈，你先翻棋</span>
+          </button>
+          <button id="mode-pvp" class="mode-btn">
+            <span class="mode-name">👥 双人同屏</span>
+            <span class="mode-desc">两人轮流操作，先翻者执翻出的颜色</span>
+          </button>
+        </div>
+        <label class="mode-difficulty">AI 难度：
+          <select id="mode-difficulty">
+            <option value="easy">简单</option>
+            <option value="medium">普通</option>
+            <option value="hard" selected>困难</option>
+            <option value="master">大师</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
     <div id="rules-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="rules-title">
       <div class="modal-content">
         <h2 id="rules-title">规则速览</h2>
         <ul>
           <li>5×12 棋盘，含铁路（多步直线/工兵转弯）与行营（安全格）。</li>
-          <li>开局所有棋子背面朝下，<b>你永远先翻第一颗棋子，翻出的颜色决定你的阵营</b>（翻到蓝色则 AI 先行移动）。</li>
+          <li>开局所有棋子背面朝下，<b>你永远先翻第一颗棋子，翻出的颜色决定你的阵营</b>（翻到蓝色则 AI 先行移动）。<b>双人同屏</b>时任意一方先翻，先翻者执翻出的颜色。</li>
           <li>回合内可<b>翻棋</b>或<b>移动</b>一颗已翻己方子；地雷/军旗不可移动。</li>
           <li>大吃小，同级同归于尽；工兵可挖雷，炸弹与任何子同归；<b>炸弹炸掉军旗 → 旗方判负</b>。</li>
           <li>行营内的子不可被攻击，且可向 <b>8 个方向</b>移动（含斜走，斜路仅限与行营斜相邻的方向）。</li>
@@ -122,6 +148,38 @@
     document.getElementById('difficulty').addEventListener('change', (e) => {
       Junqi.main.setDifficulty(e.target.value);
     });
+
+    // 模式选择：开局弹窗必选；pvp 模式隐藏顶栏难度
+    const modeModal = document.getElementById('mode-modal');
+    const difficultyWrap = document.getElementById('difficulty-wrap');
+    const modeDiffSel = document.getElementById('mode-difficulty');
+    const applyModeUI = () => {
+      const st = Junqi.main.getState();
+      difficultyWrap.style.display = (st && st.mode === 'pvp') ? 'none' : '';
+    };
+    const chooseMode = (m) => {
+      Junqi.main.setDifficulty(modeDiffSel.value);
+      document.getElementById('difficulty').value = modeDiffSel.value;
+      Junqi.main.setMode(m);
+      Junqi.main.reset();
+      modeModal.classList.add('hidden');
+      applyModeUI();
+      // 焦点还原到触发按钮，避免焦点滞留在已关闭的弹窗内
+      const trigger = document.getElementById('switch-mode');
+      if (trigger) trigger.focus();
+    };
+    document.getElementById('mode-ai').addEventListener('click', () => chooseMode('ai'));
+    document.getElementById('mode-pvp').addEventListener('click', () => chooseMode('pvp'));
+    document.getElementById('switch-mode').addEventListener('click', () => {
+      // 打开时同步弹窗内的难度选择，便于调整后再进入
+      modeDiffSel.value = document.getElementById('difficulty').value;
+      modeModal.classList.remove('hidden');
+      // 焦点移入弹窗，防止 Tab 穿透到弹窗后的棋盘
+      document.getElementById('mode-ai').focus();
+    });
+    applyModeUI();
+    // 开局弹窗默认可见：初始焦点移入弹窗
+    document.getElementById('mode-ai').focus();
 
     // 音效开关（持久化到 localStorage）
     const sfxBtn = document.getElementById('sfx-toggle');

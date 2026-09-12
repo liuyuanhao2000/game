@@ -409,24 +409,46 @@
     }
   }
 
-  function renderHud(state) {
-    let msg;
+  // 人机模式下人类的阵营；controllers 未定（首翻前）返回 null
+  function humanSideOf(state) {
+    const c = state.controllers || {};
+    if (c.red === 'human') return 'red';
+    if (c.blue === 'human') return 'blue';
+    return null;
+  }
+
+  // 状态行文案（人机/双人按 state.mode 分支；纯函数便于测试）
+  function statusText(state) {
+    const pvp = state.mode === 'pvp';
     if (state.winner) {
-      if (state.winner === 'draw') msg = '和局（困局）';
-      else {
-        const who = state.winner === state.playerSide ? '🎉 你胜' : 'AI 胜';
-        msg = who;
-      }
-    } else if (!state.sidesAssigned) {
-      msg = '点击任意背面棋子翻开，决定你的阵营';
-    } else {
-      const mine = state.turn === state.playerSide;
-      const tag = '你是 ' + NS_NAME[state.playerSide] + ' 方';
-      msg = tag + ' · ' + (mine ? '你的回合，选择棋子' : 'AI 思考中…');
+      if (state.winner === 'draw') return '和局（困局）';
+      if (pvp) return '🎉 ' + NS_NAME[state.winner] + ' 方胜';
+      return state.winner === humanSideOf(state) ? '🎉 你胜' : 'AI 胜';
     }
-    statusEl.textContent = msg;
+    if (!state.sidesAssigned) {
+      return pvp ? '任意一方点击背面棋子翻开，先翻者执其颜色'
+                 : '点击任意背面棋子翻开，决定你的阵营';
+    }
+    if (pvp) return NS_NAME[state.turn] + ' 方回合，选择棋子';
+    const humanSide = humanSideOf(state);
+    const mine = state.turn === humanSide;
+    return '你是 ' + NS_NAME[humanSide] + ' 方 · ' + (mine ? '你的回合，选择棋子' : 'AI 思考中…');
+  }
+
+  // 终局浮层标题（纯函数）
+  function gameoverTitle(state) {
+    if (state.winner === 'draw') return '和局';
+    return state.mode === 'pvp'
+      ? NS_NAME[state.winner] + ' 方获胜'
+      : (state.winner === humanSideOf(state) ? '你赢了' : 'AI 获胜');
+  }
+
+  function renderHud(state) {
+    const pvp = state.mode === 'pvp';
+    const humanSide = humanSideOf(state);
+    statusEl.textContent = statusText(state);
     // 染色状态条
-    statusEl.className = 'status' + (state.winner ? ' status-end' : (state.sidesAssigned && state.turn === state.playerSide ? ' status-mine' : ''));
+    statusEl.className = 'status' + (state.winner ? ' status-end' : (state.sidesAssigned && state.controllers[state.turn] === 'human' ? ' status-mine' : ''));
 
     // 地雷拔除进度（拔满 3 才能吃对方军旗）
     if (minesEl) {
@@ -434,13 +456,22 @@
         minesEl.textContent = '';
       } else {
         const ml = state.minesLost;
-        const myLoss = ml[state.playerSide] || 0;
-        const enLoss = ml[state.aiSide] || 0;
         const M = C.MINES_PER_SIDE;
-        minesEl.textContent =
-          '敌方军旗解锁：' + enLoss + '/' + M + ' 颗地雷' +
-          (enLoss >= M ? '（可吃旗！）' : '') +
-          '  ·  己方地雷剩余 ' + (M - myLoss) + '/' + M;
+        if (pvp) {
+          // 双人：红蓝两军各自的地雷解锁进度
+          const rLoss = ml.red || 0, bLoss = ml.blue || 0;
+          minesEl.textContent =
+            '红方军旗解锁：' + rLoss + '/' + M + (rLoss >= M ? '（可吃旗！）' : '') +
+            '  ·  蓝方军旗解锁：' + bLoss + '/' + M + (bLoss >= M ? '（可吃旗！）' : '');
+        } else {
+          const aiSide = humanSide === 'red' ? 'blue' : 'red';
+          const myLoss = ml[humanSide] || 0;
+          const enLoss = ml[aiSide] || 0;
+          minesEl.textContent =
+            '敌方军旗解锁：' + enLoss + '/' + M + ' 颗地雷' +
+            (enLoss >= M ? '（可吃旗！）' : '') +
+            '  ·  己方地雷剩余 ' + (M - myLoss) + '/' + M;
+        }
       }
     }
 
@@ -457,23 +488,24 @@
       if (state.winner) {
         if (!gameoverShown) {
           gameoverShown = true;
+          const pvp = state.mode === 'pvp';
+          // 双人模式双方都是赢家视角，统一用胜局视觉
           const kind = state.winner === 'draw' ? 'draw'
-            : (state.winner === state.playerSide ? 'win' : 'lose');
+            : (pvp || state.winner === humanSideOf(state) ? 'win' : 'lose');
           go.dataset.result = kind;
           const stampEl = document.getElementById('go-stamp-char');
           if (stampEl) stampEl.textContent = kind === 'win' ? '勝' : kind === 'lose' ? '敗' : '和';
           const tEl = document.getElementById('gameover-title');
           const sEl = document.getElementById('gameover-sub');
           if (kind === 'draw') {
-            tEl.textContent = '和局';
             sEl.textContent = '连续 40 回合无吃子、无翻棋';
           } else {
-            tEl.textContent = kind === 'win' ? '你赢了' : 'AI 获胜';
             const lm = state.lastMove;
             sEl.textContent = (lm && lm.battle && lm.battle.outcome === 'flag')
               ? '军旗被拔'
               : '对方无路可走';
           }
+          if (tEl) tEl.textContent = gameoverTitle(state);
           setTimeout(() => {
             if (state.winner) { go.classList.remove('hidden'); goStartFx(kind); }
           }, 700);
@@ -725,5 +757,6 @@
 
   NS.Junqi.ui = {
     init, render, setSelection, clearSelection, toast, flashInvalid, trackerData,
+    statusText, gameoverTitle,
   };
 })();

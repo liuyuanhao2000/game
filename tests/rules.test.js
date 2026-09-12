@@ -32,7 +32,7 @@ function place(board, i, p, side, revealed = true) {
 function makeState(board, extra = {}) {
   return Object.assign({
     board, rows: 12, cols: 5,
-    turn: 'red', playerSide: null, sidesAssigned: false,
+    turn: 'red', controllers: { red: null, blue: null }, mode: 'ai', sidesAssigned: false,
     winner: null, staleCount: 0, minesLost: { red: 0, blue: 0 },
   }, extra);
 }
