@@ -6,6 +6,6 @@ cd "$(dirname "$0")/.." || exit 1
 
 read -srp "输入 keystore 密码: " pw
 echo
-printf 'storeFile=/home/yhliu/junqi-release.keystore\nstorePassword=%s\nkeyAlias=junqi\nkeyPassword=%s\n' "$pw" "$pw" > android/keystore.properties
+printf 'storeFile=/home/yhliu/liu/release/junqi-release.keystore\nstorePassword=%s\nkeyAlias=junqi\nkeyPassword=%s\n' "$pw" "$pw" > android/keystore.properties
 unset pw
 echo "已写入 android/keystore.properties（该文件已被 gitignore）"
