@@ -3,7 +3,7 @@
 # 桌面版打包脚本（Electron，Windows / Linux；另支持 Android APK）
 #
 # 用法：
-#   scripts/dist-desktop.sh              # 默认打 Windows x64 + Linux x64
+#   scripts/dist-desktop.sh              # 默认打全平台：Windows x64 + Linux x64 + Android APK（同 all）
 #   scripts/dist-desktop.sh win          # 只打 Windows x64
 #   scripts/dist-desktop.sh linux        # 只打 Linux x64
 #   scripts/dist-desktop.sh android      # 只打 Android 签名 release APK
@@ -49,9 +49,10 @@ for arg in "$@"; do
   esac
 done
 
-# 没指定平台时默认打 Windows + Linux
+# 没指定平台时默认打全平台（win + linux + android，同 all）
 if [ ${#platforms[@]} -eq 0 ] && [ "$build_android" -eq 0 ] && [ "$dev_only" -eq 0 ]; then
   platforms+=(win32 linux)
+  build_android=1
 fi
 
 # 1. 安装依赖（已装则跳过）
