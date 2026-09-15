@@ -349,7 +349,7 @@ test('ai: master regression locks (逃营 / 工兵挖雷 / 明显白吃)', () =>
   place(st, 8, 3, 'engineer', 'red');
   let t0 = Date.now();
   const a = AI.chooseMove(st, C.DIFFICULTY.MASTER, 'blue');
-  assert.ok(Date.now() - t0 < 5000, 'master <5s');
+  assert.ok(Date.now() - t0 < 8000, 'master <8s');
   assert.ok(a && a.kind === 'move' && a.from === idx(3, 0) && [idx(2, 1), idx(4, 1)].includes(a.to),
     'master 军长应逃入行营，got ' + JSON.stringify(a));
 
@@ -360,7 +360,7 @@ test('ai: master regression locks (逃营 / 工兵挖雷 / 明显白吃)', () =>
   place(st2, 11, 4, 'flag', 'red');
   t0 = Date.now();
   const m = AI.chooseMove(st2, C.DIFFICULTY.MASTER, 'blue');
-  assert.ok(Date.now() - t0 < 5000, 'master <5s');
+  assert.ok(Date.now() - t0 < 8000, 'master <8s');
   assert.ok(m && m.kind === 'move' && m.from === idx(10, 0) && m.to === idx(10, 1),
     'master 工兵应挖雷，got ' + JSON.stringify(m));
 
@@ -370,7 +370,7 @@ test('ai: master regression locks (逃营 / 工兵挖雷 / 明显白吃)', () =>
   place(st3, 1, 1, 'platoon', 'red');
   t0 = Date.now();
   const c = AI.chooseMove(st3, C.DIFFICULTY.MASTER, 'blue');
-  assert.ok(Date.now() - t0 < 5000, 'master <5s');
+  assert.ok(Date.now() - t0 < 8000, 'master <8s');
   assert.ok(c && c.kind === 'move' && c.from === idx(1, 0) && c.to === idx(1, 1),
     'master 司令应吃白吃的排长，got ' + JSON.stringify(c));
 });
@@ -382,16 +382,17 @@ test('ai: evaluate rush term — press toward enemy flag once its mines are clea
   near.minesLost.red = 3; far.minesLost.red = 3;
   const d = AI.evaluate(near, 'blue') - AI.evaluate(far, 'blue');
   assert.ok(d > 3, '贴近敌旗应获 rush 加分，实际 ' + d.toFixed(2));
-  // 对照：雷未拔光 → 不触发（差异仅来自机动项 <3）
+  // 对照：雷未拔光 → 不触发。阈值 5：位置项（伞控空营 ≈1.2）+ 机动项（≈2.5）合计 ≈3.7，
+  // 均为方向无关的合法位置分；rush 项为 ≈7.5，仍有足够分辨 margin
   const n0 = emptyState('blue'); place(n0, 11, 2, 'flag', 'red'); place(n0, 10, 2, 'battalion', 'blue');
   const f0 = emptyState('blue'); place(f0, 11, 2, 'flag', 'red'); place(f0, 0, 0, 'battalion', 'blue');
   n0.minesLost.red = 2; f0.minesLost.red = 2;
-  assert.ok(Math.abs(AI.evaluate(n0, 'blue') - AI.evaluate(f0, 'blue')) < 3, '雷未拔光不应触发');
-  // 诚实性：暗旗（未翻）→ 不触发
+  assert.ok(Math.abs(AI.evaluate(n0, 'blue') - AI.evaluate(f0, 'blue')) < 5, '雷未拔光不应触发');
+  // 诚实性：暗旗（未翻）→ 不触发（阈值 5 同上：位置项+机动项 ≈3.7）
   const nh = emptyState('blue'); place(nh, 11, 2, 'flag', 'red', false); place(nh, 10, 2, 'battalion', 'blue');
   const fh = emptyState('blue'); place(fh, 11, 2, 'flag', 'red', false); place(fh, 0, 0, 'battalion', 'blue');
   nh.minesLost.red = 3; fh.minesLost.red = 3;
-  assert.ok(Math.abs(AI.evaluate(nh, 'blue') - AI.evaluate(fh, 'blue')) < 3, '暗旗不应泄露位置');
+  assert.ok(Math.abs(AI.evaluate(nh, 'blue') - AI.evaluate(fh, 'blue')) < 5, '暗旗不应泄露位置');
 });
 
 // ============ Worker 前提：纯数据快照可驱动 AI ============
@@ -425,4 +426,84 @@ test('ai: JSON snapshot drives chooseMove identically; live state untouched', ()
   } finally {
     Math.random = origRandom;
   }
+});
+
+// ============ 位置项（ai-upgrade：占营/伞控/穿河点/tempo 衰减）============
+test('ai: evaluate 占营项 — 己方大子入营加分，敌占营扣分', () => {
+  // 师长在行营 (2,1) vs 在普通格 (3,1)。注意 (3,1) 邻接 3 个空营有 umbrellaNear 补偿，
+  // 故阈值取保守方向性断言（权重经 A/B 校准后为 campBig=1.5）
+  const inCamp = emptyState('blue'); place(inCamp, 2, 1, 'division', 'blue');
+  const onGround = emptyState('blue'); place(onGround, 3, 1, 'division', 'blue');
+  const d = AI.evaluate(inCamp, 'blue') - AI.evaluate(onGround, 'blue');
+  assert.ok(d > 0.5, '大子占行营应加分（campBig=1.5），实际 ' + d.toFixed(2));
+
+  // 敌占营：红师长在营 (2,1) vs 在普通格 (3,1)，蓝方视角应为负
+  const eInCamp = emptyState('blue'); place(eInCamp, 2, 1, 'division', 'red');
+  const eOnGround = emptyState('blue'); place(eOnGround, 3, 1, 'division', 'red');
+  const d2 = AI.evaluate(eInCamp, 'blue') - AI.evaluate(eOnGround, 'blue');
+  assert.ok(d2 < -1.2, '敌占行营应扣分（campEnemy=-2），实际 ' + d2.toFixed(2));
+});
+
+test('ai: evaluate 伞控 — 敌占营时己子贴身加压', () => {
+  // 红师长占营 (8,2)：蓝司令贴身 (7,2)（司令不怕师长，威胁损失 0）vs 远处 (0,0)
+  const near = emptyState('blue');
+  place(near, 8, 2, 'division', 'red'); place(near, 7, 2, 'commander', 'blue');
+  const far = emptyState('blue');
+  place(far, 8, 2, 'division', 'red'); place(far, 0, 0, 'commander', 'blue');
+  const d = AI.evaluate(near, 'blue') - AI.evaluate(far, 'blue');
+  assert.ok(d > 1, '贴身伞控敌占营应获得位置分（umbrella=0.8+机动差），实际 ' + d.toFixed(2));
+});
+
+test('ai: evaluate 穿河点控制 + tempo 衰减', () => {
+  const atGate = emptyState('blue'); place(atGate, 5, 2, 'battalion', 'blue');
+  const offGate = emptyState('blue'); place(offGate, 5, 1, 'battalion', 'blue');
+  const d0 = AI.evaluate(atGate, 'blue') - AI.evaluate(offGate, 'blue');
+  assert.ok(d0 > 1.2, '占穿河点应加分（gateOwn=1.5+机动差），实际 ' + d0.toFixed(2));
+  // 高 staleCount（困局临近）→ 位置项衰减（tempo 下限 0.4）。
+  // 机动项差异（gate 8 步 vs 普通 5 步）不随 tempo 缩放，故只做相对断言
+  atGate.staleCount = 70; offGate.staleCount = 70;
+  const d1 = AI.evaluate(atGate, 'blue') - AI.evaluate(offGate, 'blue');
+  assert.ok(d1 < d0, '困局进度应衰减位置项，' + d0.toFixed(2) + ' → ' + d1.toFixed(2));
+  // 防蹲营：大子占营的位置收益随 staleCount 衰减（机动差不变，总差收缩）
+  const inCamp = emptyState('blue'); place(inCamp, 2, 1, 'division', 'blue');
+  const onGround = emptyState('blue'); place(onGround, 3, 1, 'division', 'blue');
+  const c0 = AI.evaluate(inCamp, 'blue') - AI.evaluate(onGround, 'blue');
+  inCamp.staleCount = 70; onGround.staleCount = 70;
+  const c1 = AI.evaluate(inCamp, 'blue') - AI.evaluate(onGround, 'blue');
+  assert.ok(c1 < c0, '蹲营位置收益应随困局衰减，' + c0.toFixed(2) + ' → ' + c1.toFixed(2));
+});
+
+test('ai: hard 大子主动进入空行营', () => {
+  // 蓝军长在 (4,2)，邻接三个空行营 (3,2)/(4,1)/(4,3)；
+  // 铁路去路 (5,2) 被红炸弹压制（同归亏损 45×0.6），入营成为严格最优
+  const st = emptyState('blue');
+  place(st, 4, 2, 'general', 'blue');
+  place(st, 5, 1, 'bomb', 'red');
+  place(st, 0, 0, 'platoon', 'red', false); // 远处无关暗子
+  const a = AI.chooseMove(st, C.DIFFICULTY.HARD, 'blue');
+  assert.ok(a && a.kind === 'move', '应有走法，got ' + JSON.stringify(a));
+  assert.ok(Junqi.board.terrainAt(a.to) === 'camp',
+    '军长应主动进入空行营，got ' + JSON.stringify(a));
+});
+
+test('ai: positional:false 开关幂等 — 关闭位置项仍返回合法动作', () => {
+  const st = midgameState();
+  const cfg = Object.assign({}, AI.PRESETS.hard, { positional: false });
+  const a = AI.chooseHard(st, 'blue', cfg);
+  assert.ok(a && isLegal(a, st, 'blue'), '关闭位置项应仍返回合法动作，got ' + JSON.stringify(a));
+});
+
+test('ai: medium 翻棋避开己方大子邻域', () => {
+  // 军长被己子围死（无走法），仅剩两个翻棋候选：
+  // (3,2) 邻接军长（翻出敌司令/炸弹贴脸大子最坏）vs (11,4) 孤立 → 应选孤立格
+  const st = emptyState('blue');
+  place(st, 3, 1, 'general', 'blue');
+  place(st, 2, 1, 'company', 'blue');
+  place(st, 4, 1, 'company', 'blue');
+  place(st, 3, 0, 'company', 'blue');
+  place(st, 3, 2, 'platoon', 'red', false);   // 邻接军长的暗子（普通格，无铁路加成）
+  place(st, 11, 4, 'company', 'red', false);  // 孤立暗子（普通格）
+  const a = AI.chooseMove(st, C.DIFFICULTY.MEDIUM, 'blue');
+  assert.ok(a && a.kind === 'flip' && a.index === idx(11, 4),
+    'medium 翻棋应避开己方大子邻域，got ' + JSON.stringify(a));
 });

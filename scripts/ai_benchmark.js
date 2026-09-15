@@ -60,11 +60,28 @@ function battleLosses(lm) {
 function playGame(sideA, sideB, seed) {
   const origRandom = Math.random;
   Math.random = mulberry32(seed);
-  const stat = { msA: [], msB: [], depthA: [], depthB: [], giftA: 0, giftB: 0, freeCapA: 0, freeCapB: 0, winner: null, plies: 0 };
+  const stat = { msA: [], msB: [], depthA: [], depthB: [], giftA: 0, giftB: 0, freeCapA: 0, freeCapB: 0,
+    campA: [], campB: [], gateA: [], gateB: [], winner: null, plies: 0 };
+  // 位置行为采样（每 20 ply）：双方已翻子在行营/穿河点的占用数——验证位置项真实改变行为
+  const samplePositional = (st) => {
+    let campA = 0, campB = 0, gateA = 0, gateB = 0;
+    for (let i = 0; i < st.board.length; i++) {
+      const cell = st.board[i];
+      if (!cell.piece || !cell.revealed) continue;
+      const isA = cell.piece.side === st.playerSide;
+      const t = Junqi.board.terrainAt(i);
+      if (t === 'camp') { isA ? campA++ : campB++; }
+      else if (GATE_SET.has(i)) { isA ? gateA++ : gateB++; }
+    }
+    stat.campA.push(campA); stat.campB.push(campB);
+    stat.gateA.push(gateA); stat.gateB.push(gateB);
+  };
   try {
     const st = S.createInitialState();
+    let playerSideAssigned = false;
     while (!st.winner && stat.plies < 400) {
-      // 未定阵营：A 先翻（playerSide 由首次翻棋决定，之后 A=playerSide、B=aiSide）
+      // 未定阵营：A 先翻；首翻定 playerSide=A 执翻出的颜色（修复：此前 playerSide 从未赋值，
+      // 导致 cur 恒为 sideB、胜负/损失/位置采样全部错位）
       const cur = st.sidesAssigned ? (st.turn === st.playerSide ? sideA : sideB) : sideA;
       const isA = cur === sideA;
       const t0 = Date.now();
@@ -77,6 +94,11 @@ function playGame(sideA, sideB, seed) {
       if (!a) break;
       if (!S.applyMove(st, a)) break;
       stat.plies++;
+      if (!playerSideAssigned && st.sidesAssigned) {
+        st.playerSide = st.lastMove.side; // A 首翻出的颜色
+        playerSideAssigned = true;
+      }
+      if (st.sidesAssigned && stat.plies % 20 === 0) samplePositional(st);
       if (st.lastMove) {
         const moverIsA = st.lastMove.side === st.playerSide;
         const { gift, freeCap } = battleLosses(st.lastMove);
@@ -92,12 +114,16 @@ function playGame(sideA, sideB, seed) {
   return stat;
 }
 
+// 楚河穿河点（与 ai.js 保持一致的定义）：idx(5,0)(5,2)(5,4)(6,0)(6,2)(6,4)
+const GATE_SET = new Set([25, 27, 29, 30, 32, 34]);
+
 const avg = (xs) => xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0;
 const max = (xs) => xs.length ? Math.max(...xs) : 0;
 
 let winsX = 0, winsY = 0, draws = 0, capped = 0;
 const msX = [], msY = [], depthX = [], depthY = [];
 let freeCapX = 0, freeCapY = 0, giftX = 0, giftY = 0, pliesTotal = 0;
+let campX = 0, campY = 0, gateX = 0, gateY = 0, posSamples = 0;
 
 for (let i = 0; i < N; i++) {
   const xFirst = i % 2 === 0; // 先后手各半
@@ -110,6 +136,11 @@ for (let i = 0; i < N; i++) {
   const fcX = xFirst ? s.freeCapA : s.freeCapB, fcY = xFirst ? s.freeCapB : s.freeCapA;
   const gX = xFirst ? s.giftA : s.giftB, gY = xFirst ? s.giftB : s.giftA;
   freeCapX += fcX; freeCapY += fcY; giftX += gX; giftY += gY;
+  const cX = xFirst ? s.campA : s.campB, cY = xFirst ? s.campB : s.campA;
+  const gtX = xFirst ? s.gateA : s.gateB, gtY = xFirst ? s.gateB : s.gateA;
+  campX += cX.reduce((a, b) => a + b, 0); campY += cY.reduce((a, b) => a + b, 0);
+  gateX += gtX.reduce((a, b) => a + b, 0); gateY += gtY.reduce((a, b) => a + b, 0);
+  posSamples += cX.length;
   pliesTotal += s.plies;
   let w = null;
   if (s.winner === 'draw') { draws++; w = 'draw'; }
@@ -133,6 +164,10 @@ console.log(`每步耗时: ${X.name} avg ${avg(msX).toFixed(0)}ms / max ${max(ms
 if (depthX.length) console.log(`场均完成迭代深度: ${X.name} ${avg(depthX).toFixed(1)}；${Y.name}${depthY.length ? ' ' + avg(depthY).toFixed(1) : '（旧版无此统计）'}`);
 console.log(`大子(≥${BIG})被白吃: ${X.name} 场均 ${(freeCapX / N).toFixed(2)} / ${Y.name} 场均 ${(freeCapY / N).toFixed(2)}`);
 console.log(`大子主动送死（仅参考）: ${X.name} 场均 ${(giftX / N).toFixed(2)} / ${Y.name} 场均 ${(giftY / N).toFixed(2)}`);
+if (posSamples) {
+  console.log(`场均占行营数: ${X.name} ${(campX / posSamples).toFixed(2)} / ${Y.name} ${(campY / posSamples).toFixed(2)}` +
+    `；场均控穿河点: ${X.name} ${(gateX / posSamples).toFixed(2)} / ${Y.name} ${(gateY / posSamples).toFixed(2)}`);
+}
 
 // 验收阈值（按模式）。capTol：「大子被白吃」对比的噪声容差——
 // master vs hard 是跨风格对阵（master 主动进攻、交换更多），该指标差异 ±0.2 内属样本噪声，给 0.15 容差；
@@ -140,8 +175,8 @@ console.log(`大子主动送死（仅参考）: ${X.name} 场均 ${(giftX / N).t
 const THRESH = {
   legacy:     { minWR: 0.45, maxAvg: 900,  maxPeak: 1100, capTol: 0 },
   prev:       { minWR: 0.50, maxAvg: 900,  maxPeak: 1100, capTol: 0 }, // hard 下放 quiesce 后不回退
-  master:     { minWR: 0.55, maxAvg: 1500, maxPeak: 3200, capTol: 0.15 },
-  prevmaster: { minWR: 0.55, maxAvg: 1500, maxPeak: 3200, capTol: 0 },
+  master:     { minWR: 0.55, maxAvg: 2300, maxPeak: 5600, capTol: 0.15 }, // master 4500ms 预算（ai-upgrade）
+  prevmaster: { minWR: 0.55, maxAvg: 2300, maxPeak: 5600, capTol: 0 },
 }[MODE];
 const minWR = THRESH.minWR, maxAvg = THRESH.maxAvg, maxPeak = THRESH.maxPeak;
 console.log(`\n验收[${MODE}]: ${X.name} 胜率(不计和) ≥${minWR * 100}%；avg ≤${maxAvg}ms、max ≤${maxPeak}ms；大子被白吃场均 ≤ ${Y.name} + ${THRESH.capTol}。`);

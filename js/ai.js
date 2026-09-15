@@ -40,6 +40,56 @@
   // 棋子价值
   function valueOf(type) { return C.PIECE_VALUE[type] || 0; }
 
+  // ---- 位置项静态查找表（模块加载时算一次；evaluate 热路径只做下标/成员查询）----
+  // 注意：翻翻棋开局 50 子全盘随机布子，没有"己方半场"，军旗位置未知——
+  // 因此位置项均为方向无关形式：行营=免疫+八向机动枢纽，穿河点=过河咽喉，价值对双方对称。
+  const CAMP_LIST = [];                          // [{ idx, ring }] ring=行营接触格（正交∪对角去重）
+  for (let i = 0; i < C.CELL_COUNT; i++) {
+    if (B.terrainAt(i) !== 'camp') continue;
+    const ringSet = new Set();
+    for (const n of B.orthNeighbors(i)) ringSet.add(n);
+    for (const n of B.diagNeighbors(i)) ringSet.add(n);
+    CAMP_LIST.push({ idx: i, ring: Array.from(ringSet) });
+  }
+  // 楚河穿河点：row5↔6 仅 C1/C3/C5（RIVER_COLS）可过
+  const GATES = [B.idx(5, 0), B.idx(5, 2), B.idx(5, 4), B.idx(6, 0), B.idx(6, 2), B.idx(6, 4)];
+  const GATE_SET = new Set(GATES);
+  const GATE_RING = {};                          // 穿河点 -> 正交邻居（楚河已过滤）
+  for (const g of GATES) GATE_RING[g] = B.orthNeighbors(g);
+
+  // 翻棋位置偏好（静态）：优先翻铁路/行营与穿河点邻域——翻出的子直接落到关键地形上更有用
+  const FLIP_PREF = new Float32Array(C.CELL_COUNT);
+  for (let i = 0; i < C.CELL_COUNT; i++) {
+    let p = 0;
+    if (B.terrainAt(i) === 'railway') p += 1;
+    for (const n of B.orthNeighbors(i)) {
+      if (B.terrainAt(n) === 'camp') p += 0.8;
+      else if (GATE_SET.has(n)) p += 0.5;
+    }
+    for (const n of B.diagNeighbors(i)) if (B.terrainAt(n) === 'camp') p += 0.4;
+    FLIP_PREF[i] = p;
+  }
+
+  // 位置项权重（A/B 调参与回退：单项置 0 即关闭；相对 PIECE_VALUE 定标——吃个排长=12 分，位置单项 ~1-2 分）
+  // 权重经 A/B 校准：初版（campBig=3.5 等）导致蹲营和棋率上升与对上一版胜率回退，整体减半
+  const POS_W = {
+    campBig: 1.5,      // 己方大子(≥45)占行营：免疫+八向枢纽
+    campSmall: 0.5,    // 己方小子占行营：占位价值低
+    campEnemy: -2,     // 敌占行营（对称设计）
+    umbrella: 0.8,     // 敌占营时己子贴身伞控（每子，每营封顶 3）
+    umbrellaNear: 0.4, // 己子邻接空营（下一手可入营，每营封顶 1）
+    gateOwn: 1.5,      // 己方可动子占穿河点
+    gateEnemy: -1.5,   // 敌占穿河点（我方过河咽喉受控；暗雷/旗挡门同样阻断，计入）
+    gatePress: 0.4,    // 己子贴身敌占穿河点（每点封顶 1）
+  };
+  const UMBRELLA_CAP = 3;
+
+  // 防蹲营刷分：行营免疫+正分可能诱发"蹲营拖和棋"，位置项随无吃无翻进度衰减（下限 0.4）
+  function tempoOf(state) {
+    const t = 1 - (state.staleCount || 0) / C.STALE_LIMIT;
+    return t > 0.4 ? t : 0.4;
+  }
+
   // ---- 简单：随机 ----
   function chooseEasy(state, side) {
     const actions = enumerateActions(state, side);
@@ -59,6 +109,15 @@
         return l >= 45 && c.piece && c.revealed && c.piece.side === side &&
           C.IMMOBILE.indexOf(c.piece.type) === -1;
       })) base -= 2;
+      // 位置偏好：翻棋格邻接己方大子 → 减分（翻出敌司令/炸弹贴脸大子是最坏情形）；铁路/穿河点 → 加分
+      for (const n of B.orthNeighbors(action.index)) {
+        const c = state.board[n];
+        if (c.piece && c.revealed && c.piece.side === side && valueOf(c.piece.type) >= 45) {
+          base -= 2.5;
+          break;
+        }
+      }
+      if (B.terrainAt(action.index) === 'railway' || GATE_SET.has(action.index)) base += 0.8;
       return base + (Math.random() - 0.5) * 2;
     }
     // move
@@ -133,38 +192,58 @@
     return danger;
   }
 
-  // ---- 原位威胁扫描（medium 的撤离收益与 evaluate 的威胁扣分共用）----
-  // 在**当前局面、不挪子**的前提下，扫 side 之敌方的全部已翻子的合法走法，
-  // 累计 side 方每个占格若被攻击的最大交换损失。
+  // ---- 单遍活动扫描（威胁图 + 己方机动/工兵拔雷合并，legalMoves 调用次数较两遍扫描减半）----
+  // 在**当前局面、不挪子**的前提下，扫双方全部已翻子的合法走法：
+  // - 敌方：累计 side 方每个占格被攻击的最大交换损失（loss/attacker）与敌方总走法数
+  // - 己方：累计机动走法数与工兵拔雷机会
   // 只读 revealed（不作弊）；行营免疫由 legalMoves 天然排除。
   // 语义：仅用于"原位威胁"。落点危险 D_to 必须继续用 exposureDanger（它建模让位后的铁路贯穿，此处会低估）。
-  // 返回 { loss: number[60], attacker: (string|null)[60], enemyMoves: number }
-  function threatMapOf(state, side) {
+  function scanActivity(state, side) {
     const enemy = C.opposite(side);
     const loss = new Array(C.CELL_COUNT).fill(0);
     const attacker = new Array(C.CELL_COUNT).fill(null);
-    let enemyMoves = 0;
+    let enemyMoves = 0, ownMoves = 0, engineerClears = 0;
+    const enemyMinesLeft = state.minesLost ? (C.MINES_PER_SIDE - state.minesLost[enemy]) : C.MINES_PER_SIDE;
     for (let i = 0; i < state.board.length; i++) {
       const cell = state.board[i];
-      if (!cell.piece || !cell.revealed || cell.piece.side !== enemy) continue;
+      if (!cell.piece || !cell.revealed) continue;
+      const isEnemy = cell.piece.side === enemy;
+      if (!isEnemy && cell.piece.side !== side) continue;
+      if (!isEnemy && C.IMMOBILE.indexOf(cell.piece.type) !== -1) continue; // 己方雷/旗不动，免调 legalMoves
       const ms = R.legalMoves(state, i);
-      enemyMoves += ms.length;
-      for (const m of ms) {
-        const t = state.board[m.to];
-        if (!t.piece || t.piece.side !== side) continue; // 空格走法 / 非攻击我方
-        const res = R.resolveBattle(cell.piece, t.piece);
-        let l;
-        if (res.to && res.to.piece && res.to.piece.side === side) {
-          l = 0; // 敌攻击者死、我子存活 → 无损失
-        } else if (res.to === null) {
-          l = Math.max(0, valueOf(t.piece.type) - valueOf(cell.piece.type)); // 同归：净损失
-        } else {
-          l = valueOf(t.piece.type); // 我子被吃
+      if (isEnemy) {
+        enemyMoves += ms.length;
+        for (const m of ms) {
+          const t = state.board[m.to];
+          if (!t.piece || t.piece.side !== side) continue; // 空格走法 / 非攻击我方
+          const res = R.resolveBattle(cell.piece, t.piece);
+          let l;
+          if (res.to && res.to.piece && res.to.piece.side === side) {
+            l = 0; // 敌攻击者死、我子存活 → 无损失
+          } else if (res.to === null) {
+            l = Math.max(0, valueOf(t.piece.type) - valueOf(cell.piece.type)); // 同归：净损失
+          } else {
+            l = valueOf(t.piece.type); // 我子被吃
+          }
+          if (l > loss[m.to]) { loss[m.to] = l; attacker[m.to] = cell.piece.type; }
         }
-        if (l > loss[m.to]) { loss[m.to] = l; attacker[m.to] = cell.piece.type; }
+      } else {
+        ownMoves += ms.length;
+        if (cell.piece.type === 'engineer' && enemyMinesLeft > 0) {
+          for (const m of ms) {
+            const t = state.board[m.to];
+            if (t.piece && t.piece.side === enemy && t.piece.type === 'mine') { engineerClears++; break; }
+          }
+        }
       }
     }
-    return { loss, attacker, enemyMoves };
+    return { loss, attacker, enemyMoves, ownMoves, engineerClears };
+  }
+
+  // 兼容入口（medium 与测试使用）：仅威胁图部分
+  function threatMapOf(state, side) {
+    const a = scanActivity(state, side);
+    return { loss: a.loss, attacker: a.attacker, enemyMoves: a.enemyMoves };
   }
 
   // O(1) 查表：threat 下 index 格的原位威胁值
@@ -190,8 +269,8 @@
   // ---- 困难/大师：有限深度 expectimax + 概率 ----
   // 难度预置：master = 更深预算 + 叶子静态交换搜索(quiescence) + 翻棋采样加宽
   const PRESETS = {
-    hard:   { time: 800,  nodes: 4000,  maxDepth: 8,  flipK: 3, flipPMin: 0,    quiesce: true, qdepth: 4, qDelta: 20 },
-    master: { time: 3000, nodes: 20000, maxDepth: 12, flipK: 5, flipPMin: 0.06, quiesce: true, qdepth: 4, qDelta: 20 },
+    hard:   { time: 800,  nodes: 6000,  maxDepth: 8,  flipK: 3, flipPMin: 0,    quiesce: true, qdepth: 4, qDelta: 20, positional: true, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
+    master: { time: 4500, nodes: 35000, maxDepth: 12, flipK: 5, flipPMin: 0.06, quiesce: true, qdepth: 4, qDelta: 20, positional: true, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
   };
   const ASPIRATION = 40; // 迭代加深 aspiration 半宽（围绕上轮值开窗，失败则全窗口重搜）
   let _cfg = PRESETS.hard; // 当前搜索配置（chooseHard 入口设置，finally 复位为 hard 语义）
@@ -214,62 +293,109 @@
     return 0.15;               // 营长/连长/排长
   }
 
-  // 估值（从 side 视角）
-  function evaluate(state, side) {
-    checkBudget();
+  // 廉价基线估值：拔雷进度 + 子力 + 暗子期望（无 legalMoves 扫描；供主搜索 delta 剪枝复用）
+  function evaluateBase(state, side) {
     let score = 0;
     const enemy = C.opposite(side);
     // 拔雷进度：拔对方雷=向胜利推进（+），己方雷被拔=己方军旗更暴露（−）
     if (state.minesLost) {
       score += (state.minesLost[enemy] - state.minesLost[side]) * 20;
     }
-    // 威胁扣分：threatMapOf 单遍零拷贝扫描（替换旧版"每个大子一次 exposureDanger 深拷贝"，约 3× 提速、覆盖放宽到全部可动子）
-    const threat = threatMapOf(state, side);
-    const enemyMinesLeft = state.minesLost ? (C.MINES_PER_SIDE - state.minesLost[enemy]) : C.MINES_PER_SIDE;
     const { rem, totalUnrevealed } = remainingDistribution(state);
     for (let i = 0; i < state.board.length; i++) {
       const cell = state.board[i];
       if (!cell.piece) continue;
       if (cell.revealed) {
-        const sign = cell.piece.side === side ? 1 : -1;
-        score += sign * valueOf(cell.piece.type);
-        // 己方受威胁的可动子（非行营、非雷/旗）按分层权重扣分
-        if (cell.piece.side === side && B.terrainAt(i) !== 'camp' &&
-            C.IMMOBILE.indexOf(cell.piece.type) === -1) {
-          const l = dangerAt(threat, i);
+        score += (cell.piece.side === side ? 1 : -1) * valueOf(cell.piece.type);
+      } else if (totalUnrevealed > 0) {
+        // 未翻子：按剩余分布算期望（归属未知，简化对半归属两方），不确定折扣 0.5
+        let ev = 0;
+        for (const key in rem) {
+          const p = rem[key] / totalUnrevealed;
+          const [type, s2] = key.split(':');
+          ev += p * valueOf(type) * (s2 === side ? 0.5 : -0.5);
+        }
+        score += ev * 0.5;
+      }
+    }
+    return score;
+  }
+
+  // 估值（从 side 视角）：基线 + 威胁扣分 + 机动性 + 工兵拔雷 + 位置项（占营/伞控/穿河点）
+  function evaluate(state, side) {
+    checkBudget();
+    let score = evaluateBase(state, side);
+    const enemy = C.opposite(side);
+    const enemyMinesLeft = state.minesLost ? (C.MINES_PER_SIDE - state.minesLost[enemy]) : C.MINES_PER_SIDE;
+    // 威胁扣分：scanActivity 单遍零拷贝扫描（威胁图+机动性合并，legalMoves 调用较两遍扫描减半）
+    const act = scanActivity(state, side);
+    // ---- 单遍逐格循环：威胁扣分 + 占营/穿河点占用计数（位置项主环）----
+    const positional = _cfg.positional !== false;
+    const tempo = positional ? tempoOf(state) : 0;
+    let campBig = 0, campSmall = 0, campEnemy = 0, gateOwnN = 0, gateEnemyN = 0;
+    const board = state.board;
+    for (let i = 0; i < board.length; i++) {
+      const cell = board[i];
+      if (!cell.piece || !cell.revealed) continue;
+      const mine = cell.piece.side === side;
+      const terrain = B.terrainAt(i);
+      if (mine) {
+        if (terrain !== 'camp' && C.IMMOBILE.indexOf(cell.piece.type) === -1) {
+          const l = act.loss[i]; // 己方受威胁的可动子按分层权重扣分
           if (l > 0) score -= l * threatWeight(cell.piece.type, enemyMinesLeft);
         }
+        if (terrain === 'camp') {
+          if (valueOf(cell.piece.type) >= 45) campBig++; else campSmall++;
+        } else if (GATE_SET.has(i) && C.IMMOBILE.indexOf(cell.piece.type) === -1) {
+          gateOwnN++;
+        }
       } else {
-        // 未翻子：按剩余分布算期望（归属未知，简化对半归属两方）
-        // 期望价值 = sum_type P(type) * value(type)，归属对半
-        if (totalUnrevealed > 0) {
-          let ev = 0;
-          for (const key in rem) {
-            const p = rem[key] / totalUnrevealed;
-            const [type, s2] = key.split(':');
-            ev += p * valueOf(type) * (s2 === side ? 0.5 : -0.5);
+        if (terrain === 'camp') campEnemy++;       // 营内必为可动子（营格初始为空，雷/旗不可移入）
+        else if (GATE_SET.has(i)) gateEnemyN++;    // 暗雷/旗挡穿河点同样阻断，计入
+      }
+    }
+    if (positional) {
+      score += tempo * (POS_W.campBig * campBig + POS_W.campSmall * campSmall +
+        POS_W.campEnemy * campEnemy + POS_W.gateOwn * gateOwnN + POS_W.gateEnemy * gateEnemyN);
+      // ---- 伞控/入营预备（每营 O(8)）----
+      for (const camp of CAMP_LIST) {
+        const occupant = board[camp.idx].piece;
+        if (occupant && occupant.side === enemy) {
+          let u = 0; // 敌占营不可攻击，只能贴身伞控/封锁
+          for (const n of camp.ring) {
+            const c = board[n];
+            if (c.piece && c.revealed && c.piece.side === side &&
+                C.IMMOBILE.indexOf(c.piece.type) === -1) u++;
           }
-          score += ev * 0.5; // 不确定折扣
+          score += tempo * POS_W.umbrella * Math.min(UMBRELLA_CAP, u);
+        } else if (!occupant) {
+          for (const n of camp.ring) { // 空营：己子邻接=下一手可入营，每营封顶 1
+            const c = board[n];
+            if (c.piece && c.revealed && c.piece.side === side &&
+                C.IMMOBILE.indexOf(c.piece.type) === -1) {
+              score += tempo * POS_W.umbrellaNear;
+              break;
+            }
+          }
+        }
+      }
+      // ---- 穿河点贴身压制 ----
+      for (const g of GATES) {
+        const occ = board[g].piece;
+        if (occ && occ.side === enemy) {
+          for (const n of GATE_RING[g]) {
+            const c = board[n];
+            if (c.piece && c.revealed && c.piece.side === side &&
+                C.IMMOBILE.indexOf(c.piece.type) === -1) {
+              score += tempo * POS_W.gatePress;
+              break;
+            }
+          }
         }
       }
     }
-    // ---- 机动性 + 工兵拔雷：己方已翻可动子单遍 legalMoves（副产物复用）----
-    let ownMoves = 0, engineerClears = 0;
-    for (let i = 0; i < state.board.length; i++) {
-      const cell = state.board[i];
-      if (!cell.piece || !cell.revealed || cell.piece.side !== side) continue;
-      if (C.IMMOBILE.indexOf(cell.piece.type) !== -1) continue;
-      const ms = R.legalMoves(state, i);
-      ownMoves += ms.length;
-      if (cell.piece.type === 'engineer' && enemyMinesLeft > 0) {
-        for (const m of ms) {
-          const t = state.board[m.to];
-          if (t.piece && t.piece.side === enemy && t.piece.type === 'mine') { engineerClears++; break; }
-        }
-      }
-    }
-    score += 0.5 * (ownMoves - threat.enemyMoves);
-    score += engineerClears * 6;
+    score += 0.5 * (act.ownMoves - act.enemyMoves);
+    score += act.engineerClears * 6;
 
     // ---- 军旗防御：仅当己方地雷已被拔（军旗开始 exposed）才触发；只认已翻己旗（不读暗子，不作弊）----
     if (state.minesLost && state.minesLost[side] > 0) {
@@ -329,7 +455,79 @@
     };
   }
 
-  // 在克隆上应用动作（不触发 notify）
+  // ---- make/unmake：原位应用/撤销动作（替代每节点深拷贝，预期 1.5~2× 节点率）----
+  // applyAction 返回 undo 记录；undoAction 按记录原位恢复。
+  // 约束：不得污染调用方状态（撤销后必须与调用前逐位一致——快照一致性测试依赖 boardSig）。
+  function applyAction(state, action) {
+    const undo = {
+      prevTurn: state.turn, prevStale: state.staleCount, prevWinner: state.winner,
+      prevMinesRed: state.minesLost.red, prevMinesBlue: state.minesLost.blue,
+      prevSidesAssigned: state.sidesAssigned, prevControllers: null,
+      flipCell: null, fromCell: null, toCell: null, prevCaptured: null,
+    };
+    if (action.kind === 'flip') {
+      const cell = state.board[action.index];
+      undo.flipCell = cell;
+      cell.revealed = true;
+      if (!state.sidesAssigned) {
+        // 首翻定阵营：替换 controllers 对象（撤销时恢复原引用），不污染调用方
+        undo.prevControllers = state.controllers;
+        state.controllers = { red: state.controllers.red, blue: state.controllers.blue };
+        state.controllers[cell.piece.side] = 'human';
+        state.controllers[C.opposite(cell.piece.side)] = 'ai';
+        state.sidesAssigned = true;
+        state.turn = C.opposite(cell.piece.side);
+      } else {
+        state.turn = C.opposite(state.turn);
+      }
+      state.staleCount = 0;
+      state.winner = R.checkWinner(state);
+      return undo;
+    }
+    const from = action.from, to = action.to;
+    const fcell = state.board[from], tcell = state.board[to];
+    const p = fcell.piece;
+    if (tcell.piece) {
+      // 军旗保护（legalMoves 已过滤，此处防御）
+      if (tcell.piece.type === 'flag' && state.minesLost[tcell.piece.side] < C.MINES_PER_SIDE) return undo;
+      undo.fromCell = fcell;
+      undo.toCell = tcell;
+      undo.prevCaptured = state.captured ? Object.assign({}, state.captured) : null; // applyBattle 会 bump captured，整对象备份
+      const info = STATE.applyBattle(state, from, to);
+      if (info.flagCaptured) state.winner = p.side;
+      state.staleCount = 0;
+    } else {
+      undo.fromCell = fcell;
+      undo.toCell = tcell;
+      state.board[to] = { piece: p, revealed: true };
+      state.board[from] = { piece: null, revealed: false };
+      state.staleCount += 1;
+    }
+    state.turn = C.opposite(state.turn);
+    if (!state.winner) state.winner = R.checkWinner(state);
+    return undo;
+  }
+
+  function undoAction(state, action, undo) {
+    state.turn = undo.prevTurn;
+    state.staleCount = undo.prevStale;
+    state.winner = undo.prevWinner;
+    state.minesLost.red = undo.prevMinesRed;
+    state.minesLost.blue = undo.prevMinesBlue;
+    state.sidesAssigned = undo.prevSidesAssigned;
+    if (undo.prevControllers) state.controllers = undo.prevControllers;
+    if (action.kind === 'flip') {
+      undo.flipCell.revealed = false;
+      return;
+    }
+    if (undo.fromCell) {
+      state.board[action.from] = undo.fromCell; // 回填原 cell 对象（applyBattle 是替换式写法）
+      state.board[action.to] = undo.toCell;
+    }
+    if (undo.prevCaptured) state.captured = undo.prevCaptured;
+  }
+
+  // 在克隆上应用动作（不触发 notify；cfg.makeUnmake=false 的回退路径仍在用）
   function applyOnClone(state, action) {
     const s = state; // already a clone
     if (s.winner) return;
@@ -369,7 +567,20 @@
   // threat 非空=根节点精确排序（含逃离桶）；null=深节点廉价静态排序（禁止跑 threatMapOf，否则每节点 ×25 扫爆预算）
   // killers：本层记录的截断走法，命中者排在吃子/逃离之后、flip/安静走法之前
   function actionKey(state, side, action, threat, killers) {
-    if (action.kind === 'flip') return 50000;
+    if (action.kind === 'flip') {
+      let k = 50000 + FLIP_PREF[action.index]; // 静态：优先翻铁路/行营/穿河点邻域
+      if (threat) {
+        // 根节点动态调整（深节点保持廉价）：翻棋格邻接己方大子 → 减分
+        for (const n of B.orthNeighbors(action.index)) {
+          const c = state.board[n];
+          if (c.piece && c.revealed && c.piece.side === side && valueOf(c.piece.type) >= 45) {
+            k -= 3;
+            break;
+          }
+        }
+      }
+      return k;
+    }
     const from = action.from, to = action.to;
     const p = state.board[from].piece;
     const tcell = state.board[to];
@@ -388,10 +599,13 @@
       if (d > 0) return 150000 + d + (B.terrainAt(to) === 'camp' ? 1000 : 0);
     }
     // killer 命中：仅次于吃子/逃离
+    // （history heuristic 实测负收益已移除：跨迭代累积的截断分污染 aspiration 重搜的根排序，
+    //  且 hard 档浅深度下收益本就有限——ab_test.js historyOrder 1:5）
     if (killers && killers.some((k) => k.from === from && k.to === to)) return 90000;
     let k = 10000;
-    if (B.terrainAt(to) === 'camp') k += 2;
-    else if (B.terrainAt(to) === 'railway') k += 1;
+    // 大子入空行营是高价值位置手：排序奖励可比 evaluate 权重激进（只损效率不损正确性）
+    if (B.terrainAt(to) === 'camp') k += valueOf(p.type) >= 45 ? 40 : 8;
+    else if (B.terrainAt(to) === 'railway') k += 4;
     return k;
   }
 
@@ -444,9 +658,20 @@
       if (stand > alpha) alpha = stand;
       for (const m of captureActions(state)) {
         if (stand + valueOf(state.board[m.to].piece.type) + _cfg.qDelta < alpha) continue; // delta 剪枝
-        const s = clone(state);
-        applyOnClone(s, m);
-        const v = quiesce(s, side, alpha, beta, qleft - 1);
+        let v;
+        if (_cfg.makeUnmake === false) {
+          const s = clone(state);
+          applyOnClone(s, m);
+          v = quiesce(s, side, alpha, beta, qleft - 1);
+        } else {
+          // try/finally：BudgetExceeded 穿透时也必须撤销（原位搜索的状态完整性保证）
+          const undo = applyAction(state, m);
+          try {
+            v = quiesce(state, side, alpha, beta, qleft - 1);
+          } finally {
+            undoAction(state, m, undo);
+          }
+        }
         if (v > best) best = v;
         if (best > alpha) alpha = best;
         if (alpha >= beta) break;
@@ -459,9 +684,19 @@
     if (stand < beta) beta = stand;
     for (const m of captureActions(state)) {
       if (stand - valueOf(state.board[m.to].piece.type) - _cfg.qDelta > beta) continue; // delta 剪枝
-      const s = clone(state);
-      applyOnClone(s, m);
-      const v = quiesce(s, side, alpha, beta, qleft - 1);
+      let v;
+      if (_cfg.makeUnmake === false) {
+        const s = clone(state);
+        applyOnClone(s, m);
+        v = quiesce(s, side, alpha, beta, qleft - 1);
+      } else {
+        const undo = applyAction(state, m);
+        try {
+          v = quiesce(state, side, alpha, beta, qleft - 1);
+        } finally {
+          undoAction(state, m, undo);
+        }
+      }
       if (v < best) best = v;
       if (best < beta) beta = best;
       if (alpha >= beta) break;
@@ -511,15 +746,41 @@
     return best;
   }
 
+  // 翻棋期权廉价估计：翻子≈获得一份"信息+子力期望"的期权，随暗子数增加、随困局进度衰减。
+  // 只需与真实翻棋期望同量级（±2 分内），用于浅层 flip/move 竞争定价，不参与深层搜索。
+  function flipOptionValue(state) {
+    let n = 0;
+    for (let i = 0; i < state.board.length; i++) {
+      const c = state.board[i];
+      if (c.piece && !c.revealed) n++;
+    }
+    if (!n) return 0;
+    return Math.min(3, 0.5 + n * 0.06) * tempoOf(state);
+  }
+
   // 单个动作的期望值：move 为确定（传窗口），flip 为 chance（按剩余分布 top-K 采样，全窗口取精确期望）
   function actionValue(state, action, side, depth, alpha = -Infinity, beta = Infinity, inChance = false) {
     checkBudget();
     if (action.kind === 'move') {
-      const s = clone(state);
-      applyOnClone(s, action);
-      return expectimax(s, side, depth - 1, alpha, beta, inChance);
+      if (_cfg.makeUnmake === false) {
+        const s = clone(state);
+        applyOnClone(s, action);
+        return expectimax(s, side, depth - 1, alpha, beta, inChance);
+      }
+      const undo = applyAction(state, action);
+      try {
+        return expectimax(state, side, depth - 1, alpha, beta, inChance);
+      } finally {
+        undoAction(state, action, undo); // BudgetExceeded 穿透时也必须撤销
+      }
     }
     // flip -> chance 节点
+    // 浅层收缩（flipCollapse）：翻棋 chance 采样是最贵的节点（K 路 × 全窗口 × 无 quiesce），
+    // depth ≤ flipCollapseDepth 时改用"静态估值 + 翻棋期权"廉价近似，释放预算给更深的 move 子树。
+    // 有损启发（benchmark 验收把关；cfg.flipCollapse=false 可回退）。
+    if (_cfg.flipCollapse && depth <= (_cfg.flipCollapseDepth || 2)) {
+      return evaluate(state, side) + flipOptionValue(state);
+    }
     const { rem, totalUnrevealed } = remainingDistribution(state);
     if (totalUnrevealed <= 0) return evaluate(state, side);
     // 取 top-K 概率结果
@@ -538,15 +799,25 @@
       const { key, p } = probs[k];
       weightSum += p;
       const [type, side2] = key.split(':');
-      const s = clone(state);
-      // 模拟翻开该格为 (type, side2)
-      s.board[action.index].revealed = true;
-      s.board[action.index].piece = { type, rank: C.PIECES[type].rank, side: side2 };
-      s.staleCount = 0;
-      s.turn = C.opposite(s.turn);
-      s.winner = R.checkWinner(s);
-      // chance 子树强制全窗口：截断值参与加权平均会有偏；inChance=true 且叶子不开 quiesce
-      exp += p * expectimax(s, side, depth - 1, -Infinity, Infinity, true);
+      // 原位模拟翻开该格为 (type, side2)，递归后逐字段恢复（该 cell 是替换式槽位，这里只改字段并复原）
+      const cell = state.board[action.index];
+      const prevPiece = cell.piece, prevRevealed = cell.revealed;
+      const prevTurn = state.turn, prevStale = state.staleCount, prevWinner = state.winner;
+      cell.revealed = true;
+      cell.piece = { type, rank: C.PIECES[type].rank, side: side2 };
+      state.staleCount = 0;
+      state.turn = C.opposite(state.turn);
+      state.winner = R.checkWinner(state);
+      try {
+        // chance 子树强制全窗口：截断值参与加权平均会有偏；inChance=true 且叶子不开 quiesce
+        exp += p * expectimax(state, side, depth - 1, -Infinity, Infinity, true);
+      } finally {
+        cell.piece = prevPiece;
+        cell.revealed = prevRevealed;
+        state.turn = prevTurn;
+        state.staleCount = prevStale;
+        state.winner = prevWinner;
+      }
     }
     // 归一化（top-K 未覆盖部分用当前估值近似）
     if (weightSum < 1) {
@@ -634,7 +905,7 @@
 
   NS.Junqi.ai = {
     chooseMove, chooseHard, enumerateActions, evaluate, remainingDistribution,
-    threatMapOf, dangerAt, threatWeight, PRESETS, quiesce,
+    threatMapOf, dangerAt, threatWeight, PRESETS, quiesce, POS_W,
     lastDepth: () => _lastDepth,
   };
 })();
