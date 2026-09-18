@@ -12,6 +12,8 @@ const S = Junqi.state;
 const R = Junqi.rules;
 const AI = Junqi.ai;
 const idx = (r, co) => r * 5 + co;
+// 显式开启位置项的 evaluate（位置项机制单元测试用——预置默认已关闭，裸调不含量化项）
+const evaluatePos = (st, side) => AI.evaluate(st, side, { positional: true });
 
 // ---- 确定性局面辅助（空格手摆：暗子=0、无 flip、无 chance 噪声）----
 function emptyState(turn) {
@@ -434,13 +436,13 @@ test('ai: evaluate 占营项 — 己方大子入营加分，敌占营扣分', ()
   // 故阈值取保守方向性断言（权重经 A/B 校准后为 campBig=1.5）
   const inCamp = emptyState('blue'); place(inCamp, 2, 1, 'division', 'blue');
   const onGround = emptyState('blue'); place(onGround, 3, 1, 'division', 'blue');
-  const d = AI.evaluate(inCamp, 'blue') - AI.evaluate(onGround, 'blue');
+  const d = evaluatePos(inCamp, 'blue') - evaluatePos(onGround, 'blue');
   assert.ok(d > 0.5, '大子占行营应加分（campBig=1.5），实际 ' + d.toFixed(2));
 
   // 敌占营：红师长在营 (2,1) vs 在普通格 (3,1)，蓝方视角应为负
   const eInCamp = emptyState('blue'); place(eInCamp, 2, 1, 'division', 'red');
   const eOnGround = emptyState('blue'); place(eOnGround, 3, 1, 'division', 'red');
-  const d2 = AI.evaluate(eInCamp, 'blue') - AI.evaluate(eOnGround, 'blue');
+  const d2 = evaluatePos(eInCamp, 'blue') - evaluatePos(eOnGround, 'blue');
   assert.ok(d2 < -1.2, '敌占行营应扣分（campEnemy=-2），实际 ' + d2.toFixed(2));
 });
 
@@ -450,26 +452,26 @@ test('ai: evaluate 伞控 — 敌占营时己子贴身加压', () => {
   place(near, 8, 2, 'division', 'red'); place(near, 7, 2, 'commander', 'blue');
   const far = emptyState('blue');
   place(far, 8, 2, 'division', 'red'); place(far, 0, 0, 'commander', 'blue');
-  const d = AI.evaluate(near, 'blue') - AI.evaluate(far, 'blue');
+  const d = evaluatePos(near, 'blue') - evaluatePos(far, 'blue');
   assert.ok(d > 1, '贴身伞控敌占营应获得位置分（umbrella=0.8+机动差），实际 ' + d.toFixed(2));
 });
 
 test('ai: evaluate 穿河点控制 + tempo 衰减', () => {
   const atGate = emptyState('blue'); place(atGate, 5, 2, 'battalion', 'blue');
   const offGate = emptyState('blue'); place(offGate, 5, 1, 'battalion', 'blue');
-  const d0 = AI.evaluate(atGate, 'blue') - AI.evaluate(offGate, 'blue');
+  const d0 = evaluatePos(atGate, 'blue') - evaluatePos(offGate, 'blue');
   assert.ok(d0 > 1.2, '占穿河点应加分（gateOwn=1.5+机动差），实际 ' + d0.toFixed(2));
   // 高 staleCount（困局临近）→ 位置项衰减（tempo 下限 0.4）。
   // 机动项差异（gate 8 步 vs 普通 5 步）不随 tempo 缩放，故只做相对断言
   atGate.staleCount = 70; offGate.staleCount = 70;
-  const d1 = AI.evaluate(atGate, 'blue') - AI.evaluate(offGate, 'blue');
+  const d1 = evaluatePos(atGate, 'blue') - evaluatePos(offGate, 'blue');
   assert.ok(d1 < d0, '困局进度应衰减位置项，' + d0.toFixed(2) + ' → ' + d1.toFixed(2));
   // 防蹲营：大子占营的位置收益随 staleCount 衰减（机动差不变，总差收缩）
   const inCamp = emptyState('blue'); place(inCamp, 2, 1, 'division', 'blue');
   const onGround = emptyState('blue'); place(onGround, 3, 1, 'division', 'blue');
-  const c0 = AI.evaluate(inCamp, 'blue') - AI.evaluate(onGround, 'blue');
+  const c0 = evaluatePos(inCamp, 'blue') - evaluatePos(onGround, 'blue');
   inCamp.staleCount = 70; onGround.staleCount = 70;
-  const c1 = AI.evaluate(inCamp, 'blue') - AI.evaluate(onGround, 'blue');
+  const c1 = evaluatePos(inCamp, 'blue') - evaluatePos(onGround, 'blue');
   assert.ok(c1 < c0, '蹲营位置收益应随困局衰减，' + c0.toFixed(2) + ' → ' + c1.toFixed(2));
 });
 
@@ -506,4 +508,114 @@ test('ai: medium 翻棋避开己方大子邻域', () => {
   const a = AI.chooseMove(st, C.DIFFICULTY.MEDIUM, 'blue');
   assert.ok(a && a.kind === 'flip' && a.index === idx(11, 4),
     'medium 翻棋应避开己方大子邻域，got ' + JSON.stringify(a));
+});
+
+// ---- 翻棋估值鞅与翻棋无偏性（回归护栏：锁死"翻棋估值套利"与"翻棋偏色"两类问题）----
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test('ai: 翻棋估值鞅 — 偏斜暗子池下翻一颗的期望估值变化≈0（防套利回归）', () => {
+  // 构造暗子池明显偏 AI(blue) 色的局面：玩家先翻 + 只翻出玩家色 8 颗。
+  // 旧实现（暗子期望 0.25 折扣）下翻一颗平均 +4~5 分虚假收益；修复后应≈0。
+  const origRandom = Math.random;
+  Math.random = mulberry32(42);
+  try {
+    const st = S.createInitialState();
+    let humanColor = null, flipped = 0;
+    for (let i = 0; i < st.board.length && flipped < 9; i++) {
+      const c = st.board[i];
+      if (!c.piece || c.revealed) continue;
+      if (!humanColor) {
+        S.applyMove(st, { kind: 'flip', index: i });
+        humanColor = st.lastMove.side; flipped++;
+      } else if (c.piece.side === humanColor) {
+        S.applyMove(st, { kind: 'flip', index: i }); flipped++;
+      }
+    }
+    const aiSide = C.opposite(humanColor);
+    const { rem, totalUnrevealed } = AI.remainingDistribution(st);
+    let mCell = 0; // 池期望符号材料（>0=池偏 AI 色）
+    for (const key in rem) {
+      const [type, s2] = key.split(':');
+      mCell += (rem[key] / totalUnrevealed) * C.PIECE_VALUE[type] * (s2 === aiSide ? 1 : -1);
+    }
+    assert.ok(mCell > 2, '前置：暗子池应偏 AI 色（M=' + mCell.toFixed(2) + '）');
+    const before = AI.evaluate(st, aiSide);
+    let sum = 0, n = 0;
+    for (let i = 0; i < st.board.length; i++) {
+      const c = st.board[i];
+      if (!c.piece || c.revealed) continue;
+      c.revealed = true;
+      sum += AI.evaluate(st, aiSide) - before;
+      c.revealed = false;
+      n++;
+    }
+    const avg = sum / n;
+    assert.ok(Math.abs(avg) < 1.0,
+      '翻一颗的期望估值变化应为≈0（残差为机动性等次级项），got ' + avg.toFixed(3) + '（旧套利实现约 +0.75M=' + (0.75 * mCell).toFixed(2) + '）');
+  } finally {
+    Math.random = origRandom;
+  }
+});
+
+test('ai: 翻棋无偏 — AI 翻出双方颜色的频率与暗子池真实比例一致（3σ 内）', () => {
+  // 种子化自弈 6 局（hard vs medium 替身），对每次 AI 翻棋记录"翻出玩家色"与
+  // 当时暗子池中玩家色比例。翻棋内容在布子时已随机固定，AI 不读暗子身份——
+  // 实际频率应服从池比例（二项检验 |z| < 3）。
+  const N = 6;
+  let aiFlips = 0, aiFlipHuman = 0, expHuman = 0;
+  for (let g = 0; g < N; g++) {
+    const origRandom = Math.random;
+    Math.random = mulberry32(5000 + g);
+    try {
+      const st = S.createInitialState();
+      let humanColor = null, plies = 0;
+      while (!st.winner && plies < 400) {
+        let a;
+        if (!st.sidesAssigned) {
+          const idxs = [];
+          for (let i = 0; i < st.board.length; i++) {
+            const c = st.board[i];
+            if (c.piece && !c.revealed) idxs.push(i);
+          }
+          a = { kind: 'flip', index: idxs[Math.floor(Math.random() * idxs.length)] };
+        } else if (st.controllers[st.turn] === 'ai') {
+          a = AI.chooseMove(st, C.DIFFICULTY.HARD, st.turn);
+          if (!a) break;
+          if (a.kind === 'flip') {
+            let hHuman = 0, tot = 0;
+            for (const cell of st.board) {
+              if (cell.piece && !cell.revealed) { tot++; if (cell.piece.side === humanColor) hHuman++; }
+            }
+            if (tot > 0) {
+              expHuman += hHuman / tot;
+              if (st.board[a.index].piece.side === humanColor) aiFlipHuman++;
+              aiFlips++;
+            }
+          }
+        } else {
+          a = AI.chooseMove(st, C.DIFFICULTY.MEDIUM, st.turn);
+          if (!a) break;
+        }
+        if (!S.applyMove(st, a)) break;
+        if (!humanColor && st.sidesAssigned) humanColor = st.lastMove.side;
+        plies++;
+      }
+    } finally {
+      Math.random = origRandom;
+    }
+  }
+  assert.ok(aiFlips >= 20, '样本过少（' + aiFlips + ' 次），测试不可靠');
+  const p = expHuman / aiFlips;
+  const z = (aiFlipHuman - expHuman) / Math.sqrt(Math.max(p * (1 - p), 1e-9) * aiFlips);
+  assert.ok(Math.abs(z) < 3,
+    'AI 翻出玩家色 ' + aiFlipHuman + '/' + aiFlips + ' 应与暗子池比例 ' + (100 * p).toFixed(1) + '% 一致（z=' + z.toFixed(2) + '）');
 });

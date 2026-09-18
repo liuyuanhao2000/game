@@ -269,8 +269,10 @@
   // ---- 困难/大师：有限深度 expectimax + 概率 ----
   // 难度预置：master = 更深预算 + 叶子静态交换搜索(quiescence) + 翻棋采样加宽
   const PRESETS = {
-    hard:   { time: 800,  nodes: 6000,  maxDepth: 8,  flipK: 3, flipPMin: 0,    quiesce: true, qdepth: 4, qDelta: 20, positional: true, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
-    master: { time: 4500, nodes: 35000, maxDepth: 12, flipK: 5, flipPMin: 0.06, quiesce: true, qdepth: 4, qDelta: 20, positional: true, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
+    // positional：位置项（占营/伞控/穿河点）经 A/B 与基准复核无实测收益且加剧和棋/拖沓，默认关闭；
+    // 代码与开关保留，可经 ab_test.js positional 复验后再开启
+    hard:   { time: 800,  nodes: 6000,  maxDepth: 8,  flipK: 3, flipPMin: 0,    quiesce: true, qdepth: 4, qDelta: 20, positional: false, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
+    master: { time: 4500, nodes: 35000, maxDepth: 12, flipK: 5, flipPMin: 0.06, quiesce: true, qdepth: 4, qDelta: 20, positional: false, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
   };
   const ASPIRATION = 40; // 迭代加深 aspiration 半宽（围绕上轮值开窗，失败则全窗口重搜）
   let _cfg = PRESETS.hard; // 当前搜索配置（chooseHard 入口设置，finally 复位为 hard 语义）
@@ -308,21 +310,22 @@
       if (cell.revealed) {
         score += (cell.piece.side === side ? 1 : -1) * valueOf(cell.piece.type);
       } else if (totalUnrevealed > 0) {
-        // 未翻子：按剩余分布算期望（归属未知，简化对半归属两方），不确定折扣 0.5
-        let ev = 0;
+        // 未翻子：按剩余分布算期望材料，归属期望 ±1（无折扣）。
+        // 关键：暗子期望必须与"翻开后的实现值"构成鞅（期望变化=0）——
+        // 任何折扣都会制造"翻棋变现"的虚假期望收益（池偏己色时 AI 连翻刷分）。
         for (const key in rem) {
           const p = rem[key] / totalUnrevealed;
           const [type, s2] = key.split(':');
-          ev += p * valueOf(type) * (s2 === side ? 0.5 : -0.5);
+          score += p * valueOf(type) * (s2 === side ? 1 : -1);
         }
-        score += ev * 0.5;
       }
     }
     return score;
   }
 
   // 估值（从 side 视角）：基线 + 威胁扣分 + 机动性 + 工兵拔雷 + 位置项（占营/伞控/穿河点）
-  function evaluate(state, side) {
+  // opts.positional 可显式覆盖默认（单测在预置默认关闭时仍可直测位置项机制）
+  function evaluate(state, side, opts) {
     checkBudget();
     let score = evaluateBase(state, side);
     const enemy = C.opposite(side);
@@ -330,7 +333,7 @@
     // 威胁扣分：scanActivity 单遍零拷贝扫描（威胁图+机动性合并，legalMoves 调用较两遍扫描减半）
     const act = scanActivity(state, side);
     // ---- 单遍逐格循环：威胁扣分 + 占营/穿河点占用计数（位置项主环）----
-    const positional = _cfg.positional !== false;
+    const positional = opts ? opts.positional !== false : _cfg.positional !== false;
     const tempo = positional ? tempoOf(state) : 0;
     let campBig = 0, campSmall = 0, campEnemy = 0, gateOwnN = 0, gateEnemyN = 0;
     const board = state.board;
