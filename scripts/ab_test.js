@@ -47,10 +47,28 @@ function battleLosses(lm) {
   return { gift, freeCap };
 }
 
+// 楚河穿河点（与 ai.js 一致）：idx(5,0)(5,2)(5,4)(6,0)(6,2)(6,4)
+const GATE_SET = new Set([25, 27, 29, 30, 32, 34]);
+
 function playGame(engineX, engineY, cfgX, cfgY, seed) {
   const origRandom = Math.random;
   Math.random = mulberry32(seed);
-  const stat = { giftX: 0, giftY: 0, freeCapX: 0, freeCapY: 0, winner: null, plies: 0 };
+  const stat = { giftX: 0, giftY: 0, freeCapX: 0, freeCapY: 0, winner: null, plies: 0,
+    campX: [], campY: [], gateX: [], gateY: [] };
+  // 位置行为采样（每 20 ply）：双方已翻子在行营/穿河点的占用数——验证位置项真实改变行为
+  const samplePositional = (st) => {
+    let campX = 0, campY = 0, gateX = 0, gateY = 0;
+    for (let i = 0; i < st.board.length; i++) {
+      const cell = st.board[i];
+      if (!cell.piece || !cell.revealed) continue;
+      const isX = cell.piece.side === st.playerSide;
+      const t = Junqi.board.terrainAt(i);
+      if (t === 'camp') { isX ? campX++ : campY++; }
+      else if (GATE_SET.has(i)) { isX ? gateX++ : gateY++; }
+    }
+    stat.campX.push(campX); stat.campY.push(campY);
+    stat.gateX.push(gateX); stat.gateY.push(gateY);
+  };
   try {
     const st = S.createInitialState();
     let playerSideAssigned = false;
@@ -64,6 +82,7 @@ function playGame(engineX, engineY, cfgX, cfgY, seed) {
       if (!S.applyMove(st, a)) break;
       stat.plies++;
       if (!playerSideAssigned && st.sidesAssigned) { st.playerSide = st.lastMove.side; playerSideAssigned = true; }
+      if (st.sidesAssigned && stat.plies % 20 === 0) samplePositional(st);
       if (st.lastMove) {
         const moverIsX = st.lastMove.side === st.playerSide;
         const { gift, freeCap } = battleLosses(st.lastMove);
@@ -80,11 +99,15 @@ function playGame(engineX, engineY, cfgX, cfgY, seed) {
 }
 
 let winsA = 0, winsB = 0, draws = 0, capped = 0, freeCapA = 0, freeCapB = 0, pliesTotal = 0;
+let campA = 0, campB = 0, gateA = 0, gateB = 0, posSamples = 0;
 for (let i = 0; i < N; i++) {
   const xFirst = i % 2 === 0;
   const s = playGame(engineA, engineB, cfgA, cfgB, 2000 + i); // A 恒为 X（A=完整特性）
   const fcA = s.freeCapX, fcB = s.freeCapY;
   freeCapA += fcA; freeCapB += fcB; pliesTotal += s.plies;
+  campA += s.campX.reduce((a, b) => a + b, 0); campB += s.campY.reduce((a, b) => a + b, 0);
+  gateA += s.gateX.reduce((a, b) => a + b, 0); gateB += s.gateY.reduce((a, b) => a + b, 0);
+  posSamples += s.campX.length;
   let w = null;
   if (s.winner === 'draw') { draws++; w = '和'; }
   else if (s.winner === s.playerSide) w = 'A';
@@ -99,4 +122,8 @@ console.log(`\n===== A/B：全特性 vs 关闭 ${FEATURE}（hard 预置，${N} �
 console.log(`胜负: A ${winsA} / B ${winsB} / 和 ${draws} / 截断 ${capped}；` +
   (decided ? `A 胜率(不计和/截断) ${(100 * winsA / decided).toFixed(1)}%` : '无决胜局'));
 console.log(`大子被白吃: A 场均 ${(freeCapA / N).toFixed(2)} / B 场均 ${(freeCapB / N).toFixed(2)}；场均步数 ${(pliesTotal / N).toFixed(0)}`);
+if (posSamples) {
+  console.log(`场均占行营数: A ${(campA / posSamples).toFixed(2)} / B ${(campB / posSamples).toFixed(2)}` +
+    `；场均控穿河点: A ${(gateA / posSamples).toFixed(2)} / B ${(gateB / posSamples).toFixed(2)}`);
+}
 console.log(winsA > winsB ? '→ 该特性为正收益，保留' : winsA < winsB ? '→ 该特性为负收益，考虑关闭/调整' : '→ 无显著差异');

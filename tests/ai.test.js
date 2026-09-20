@@ -510,8 +510,10 @@ test('ai: medium 翻棋避开己方大子邻域', () => {
     'medium 翻棋应避开己方大子邻域，got ' + JSON.stringify(a));
 });
 
-// ---- 翻棋估值鞅与翻棋无偏性（回归护栏：锁死"翻棋估值套利"与"翻棋偏色"两类问题）----
-
+// ---- 翻棋无偏性（回归护栏：锁死"翻棋偏色"作弊问题）----
+// 注：v1.0.6 起暗子估值回退 1.0.3 方案（±0.5 归属 + 0.5 折扣），
+// 原"翻棋估值鞅"测试（要求翻棋期望变化≈0）与设计方案冲突，已按决策移除；
+// 翻棋实现波动（±0.75×期望）是 1.0.3 实战风格的一部分，不再视为套利。
 function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -522,55 +524,12 @@ function mulberry32(seed) {
   };
 }
 
-test('ai: 翻棋估值鞅 — 偏斜暗子池下翻一颗的期望估值变化≈0（防套利回归）', () => {
-  // 构造暗子池明显偏 AI(blue) 色的局面：玩家先翻 + 只翻出玩家色 8 颗。
-  // 旧实现（暗子期望 0.25 折扣）下翻一颗平均 +4~5 分虚假收益；修复后应≈0。
-  const origRandom = Math.random;
-  Math.random = mulberry32(42);
-  try {
-    const st = S.createInitialState();
-    let humanColor = null, flipped = 0;
-    for (let i = 0; i < st.board.length && flipped < 9; i++) {
-      const c = st.board[i];
-      if (!c.piece || c.revealed) continue;
-      if (!humanColor) {
-        S.applyMove(st, { kind: 'flip', index: i });
-        humanColor = st.lastMove.side; flipped++;
-      } else if (c.piece.side === humanColor) {
-        S.applyMove(st, { kind: 'flip', index: i }); flipped++;
-      }
-    }
-    const aiSide = C.opposite(humanColor);
-    const { rem, totalUnrevealed } = AI.remainingDistribution(st);
-    let mCell = 0; // 池期望符号材料（>0=池偏 AI 色）
-    for (const key in rem) {
-      const [type, s2] = key.split(':');
-      mCell += (rem[key] / totalUnrevealed) * C.PIECE_VALUE[type] * (s2 === aiSide ? 1 : -1);
-    }
-    assert.ok(mCell > 2, '前置：暗子池应偏 AI 色（M=' + mCell.toFixed(2) + '）');
-    const before = AI.evaluate(st, aiSide);
-    let sum = 0, n = 0;
-    for (let i = 0; i < st.board.length; i++) {
-      const c = st.board[i];
-      if (!c.piece || c.revealed) continue;
-      c.revealed = true;
-      sum += AI.evaluate(st, aiSide) - before;
-      c.revealed = false;
-      n++;
-    }
-    const avg = sum / n;
-    assert.ok(Math.abs(avg) < 1.0,
-      '翻一颗的期望估值变化应为≈0（残差为机动性等次级项），got ' + avg.toFixed(3) + '（旧套利实现约 +0.75M=' + (0.75 * mCell).toFixed(2) + '）');
-  } finally {
-    Math.random = origRandom;
-  }
-});
-
 test('ai: 翻棋无偏 — AI 翻出双方颜色的频率与暗子池真实比例一致（3σ 内）', () => {
-  // 种子化自弈 6 局（hard vs medium 替身），对每次 AI 翻棋记录"翻出玩家色"与
+  // 种子化自弈（hard vs medium 替身），对每次 AI 翻棋记录"翻出玩家色"与
   // 当时暗子池中玩家色比例。翻棋内容在布子时已随机固定，AI 不读暗子身份——
   // 实际频率应服从池比例（二项检验 |z| < 3）。
-  const N = 6;
+  // 注：hard 翻棋频率随版本有波动，多局数攒样本保二项检验功效。
+  const N = 14;
   let aiFlips = 0, aiFlipHuman = 0, expHuman = 0;
   for (let g = 0; g < N; g++) {
     const origRandom = Math.random;
