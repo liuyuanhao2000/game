@@ -1,8 +1,8 @@
-// 军旗翻翻棋 — 新版 AI vs 1.0.3(最强老版) 强度基准（回归定位/验收用，不进 index.html）
+// 军旗翻翻棋 — 新版 AI vs 指定基线（默认 1.0.3 最强老版）强度基准（回归定位/验收用，不进 index.html）
 // 用法:
-//   node scripts/bench_103.js [newEnginePath] [hard|master] [N]
-//   newEnginePath 默认 ../js/ai.js；可传 /tmp 变体（单特性回退的副本）做二分定位
-//   先后手各半、种子化可复现。1.0.3 用其原生 PRESETS，新引擎用其自身 PRESETS（同档位）。
+//   node scripts/bench_103.js [newEnginePath] [hard|master] [N] [baselineEnginePath]
+//   newEnginePath 默认 ../js/ai.js；baselineEnginePath 默认 scripts/ai_v103.js（可传 ai_v106.js 等）
+//   先后手各半、种子化可复现。双方各用其自身 PRESETS（同档位）。
 'use strict';
 const path = require('path');
 const G = __dirname + '/../js/';
@@ -12,7 +12,9 @@ require(G + 'rules.js');
 require(G + 'state.js');
 const C = Junqi.constants, S = Junqi.state;
 
-require(__dirname + '/ai_v103.js');
+const basePath = process.argv[5] || (__dirname + '/ai_v103.js');
+const BASE_LABEL = path.basename(basePath).replace(/\.js$/, '');
+require(basePath);
 const engine103 = Junqi.ai;
 const newPath = process.argv[2] || (G + 'ai.js');
 require(newPath);
@@ -101,12 +103,12 @@ for (let i = 0; i < N; i++) {
     (typeof s.matDiff === 'number' ? ` 终局子力差(${w === 'V103' ? '-' : '+'})${Math.abs(s.matDiff)}` : ''));
 }
 const decided = winsNew + wins103;
-console.log(`\n===== 新版 vs 1.0.3（${PRESET}，${N} 局）=====`);
-console.log(`胜负: 新版 ${winsNew} / 1.0.3 ${wins103} / 和 ${draws} / 截断 ${capped}` +
+console.log(`\n===== 新版 vs ${BASE_LABEL}（${PRESET}，${N} 局）=====`);
+console.log(`胜负: 新版 ${winsNew} / ${BASE_LABEL} ${wins103} / 和 ${draws} / 截断 ${capped}` +
   (decided ? `  → 新版胜率(不计和/截断) ${(100 * winsNew / decided).toFixed(1)}%` : ''));
 if (matN > 1) {
   const mean = matSum / matN, se = Math.sqrt((matSq - matSum * matSum / matN) / (matN - 1) / matN);
   console.log(`终局已翻子力差（新版视角）: 均值 ${mean.toFixed(1)} ± ${se.toFixed(1)}（n=${matN}；|均值|>2×SE 即有统计差异）`);
 }
-console.log(`总耗时: 新版 ${(msNew / 1000).toFixed(0)}s（场均/局 ${(msNew / N / 1000).toFixed(1)}s）/ 1.0.3 ${(ms103 / 1000).toFixed(0)}s` +
+console.log(`总耗时: 新版 ${(msNew / 1000).toFixed(0)}s（场均/局 ${(msNew / N / 1000).toFixed(1)}s）/ ${BASE_LABEL} ${(ms103 / 1000).toFixed(0)}s` +
   `；场均步数 ${(pliesTotal / N).toFixed(0)}`);

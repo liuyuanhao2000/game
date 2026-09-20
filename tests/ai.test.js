@@ -510,6 +510,81 @@ test('ai: medium 翻棋避开己方大子邻域', () => {
     'medium 翻棋应避开己方大子邻域，got ' + JSON.stringify(a));
 });
 
+// ---- 开局占营根修正（openingCampOverride）单测：开局窗口语义 + 饱和/守卫边界 ----
+// 开局局面辅助：己子贴空营 + nHidden 个暗子（默认 25，恰达开局阈值）
+function openingState(nHidden = 25) {
+  const st = emptyState('blue');
+  place(st, 3, 1, 'division', 'blue');   // 贴营 (2,1)/(3,2)
+  place(st, 1, 1, 'platoon', 'blue');    // 贴营 (2,1)
+  let hidden = 0;
+  for (let i = 0; i < st.board.length && hidden < nHidden; i++) {
+    // 行营保持空（真实开局行营不放子），暗子只摆普通/铁路格
+    if (!st.board[i].piece && Junqi.board.terrainAt(i) !== 'camp') {
+      st.board[i] = { piece: { type: 'company', rank: 3, side: 'red' }, revealed: false };
+      hidden++;
+    }
+  }
+  return st;
+}
+
+test('ai: 开局占营 — 开局最优着为翻棋时以最高价值候选入营着替代', () => {
+  const st = openingState(); // 暗子=25 ≥ 阈值，开局
+  const actions = AI.enumerateActions(st, 'blue');
+  const a = AI.openingCampOverride(st, 'blue', { kind: 'flip', index: 0 }, actions, true);
+  assert.ok(a && a.kind === 'move' && a.from === idx(3, 1) &&
+    (a.to === idx(2, 1) || a.to === idx(3, 2)),
+    '开局应以最大子（师长）入营，got ' + JSON.stringify(a));
+});
+
+test('ai: 开局占营 — 中后期（暗子<25）不干预', () => {
+  const st = openingState(24); // 暗子 24 < 25 → 非开局
+  const actions = AI.enumerateActions(st, 'blue');
+  assert.strictEqual(AI.openingCampOverride(st, 'blue', { kind: 'flip', index: 0 }, actions, true), null);
+});
+
+test('ai: 开局占营 — 己方占营饱和（≥3）后不干预', () => {
+  const st = openingState();
+  place(st, 2, 1, 'company', 'blue');
+  place(st, 2, 3, 'company', 'blue');
+  place(st, 3, 2, 'company', 'blue'); // 己方已占 3 营
+  const actions = AI.enumerateActions(st, 'blue');
+  assert.strictEqual(AI.openingCampOverride(st, 'blue', { kind: 'flip', index: 0 }, actions, true), null);
+});
+
+test('ai: 开局占营 — 最优着非翻棋时不干预', () => {
+  const st = openingState();
+  const actions = AI.enumerateActions(st, 'blue');
+  const best = { kind: 'move', from: idx(3, 1), to: idx(2, 1) };
+  assert.strictEqual(AI.openingCampOverride(st, 'blue', best, actions, true), null);
+});
+
+test('ai: 开局占营 — 守卫：入营致己大子被铁路线贯穿攻击时拒绝/换候选', () => {
+  // 敌司令(1,0) 沿 C1 铁路被排长(3,0) 阻断；排长入营(2,1) 后线路打通直杀师长(5,0) → 拒绝，
+  // 回落到安全候选：师长自己入营 (4,1)。局面含 25 暗子维持"开局"判定。
+  const st = emptyState('blue');
+  place(st, 1, 0, 'commander', 'red');
+  place(st, 3, 0, 'platoon', 'blue');
+  place(st, 5, 0, 'division', 'blue');
+  let hidden = 0;
+  for (let i = 0; i < st.board.length && hidden < 25; i++) {
+    if (!st.board[i].piece && Junqi.board.terrainAt(i) !== 'camp') {
+      st.board[i] = { piece: { type: 'company', rank: 3, side: 'red' }, revealed: false };
+      hidden++;
+    }
+  }
+  const actions = AI.enumerateActions(st, 'blue');
+  assert.strictEqual(AI.threatMapOf(st, 'blue').loss[idx(5, 0)], 0, '前置：师长当前不可被直达');
+  const a = AI.openingCampOverride(st, 'blue', { kind: 'flip', index: 0 }, actions, true);
+  assert.ok(a && a.kind === 'move' && a.from === idx(5, 0) && a.to === idx(4, 1),
+    '危险候选被拒后应改选师长入营，got ' + JSON.stringify(a));
+});
+
+test('ai: 开局占营 — enabled=false 时不干预', () => {
+  const st = openingState();
+  const actions = AI.enumerateActions(st, 'blue');
+  assert.strictEqual(AI.openingCampOverride(st, 'blue', { kind: 'flip', index: 0 }, actions, false), null);
+});
+
 // ---- 翻棋无偏性（回归护栏：锁死"翻棋偏色"作弊问题）----
 // 注：v1.0.6 起暗子估值回退 1.0.3 方案（±0.5 归属 + 0.5 折扣），
 // 原"翻棋估值鞅"测试（要求翻棋期望变化≈0）与设计方案冲突，已按决策移除；

@@ -260,11 +260,9 @@
     // （鞅暗子估值、FLIP_PREF 翻棋位置偏好、占营优先根修正——自弈 A/B 不差，但真人体验为负：
     //  翻棋过多/蹲营被动），仅保留客观正收益的基础设施（make/unmake 节点率、scanActivity 合并扫描、
     //  更高节点预算）。
-    // openingCamp（v1.0.7）：开局占营根修正——开局窗口内最优着为翻棋且可入空营时改入营，
-    // 严格限定开局（暗子≥25）+占营饱和（<3），中后期与基线一致。
     // positional：位置项保持关闭（30 局 A/B 负收益：伞控诱导"围营跳舞"）；机制经 evaluate(opts.positional) 保留供单测。
-    hard:   { time: 800,  nodes: 6000,  maxDepth: 8,  flipK: 3, flipPMin: 0,    quiesce: true, qdepth: 4, qDelta: 20, positional: false, openingCamp: true, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
-    master: { time: 4500, nodes: 35000, maxDepth: 12, flipK: 5, flipPMin: 0.06, quiesce: true, qdepth: 4, qDelta: 20, positional: false, openingCamp: true, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
+    hard:   { time: 800,  nodes: 6000,  maxDepth: 8,  flipK: 3, flipPMin: 0,    quiesce: true, qdepth: 4, qDelta: 20, positional: false, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
+    master: { time: 4500, nodes: 35000, maxDepth: 12, flipK: 5, flipPMin: 0.06, quiesce: true, qdepth: 4, qDelta: 20, positional: false, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
   };
   const ASPIRATION = 40; // 迭代加深 aspiration 半宽（围绕上轮值开窗，失败则全窗口重搜）
   let _cfg = PRESETS.hard; // 当前搜索配置（chooseHard 入口设置，finally 复位为 hard 语义）
@@ -833,59 +831,6 @@
     if (slot.length > 2) slot.length = 2;
   }
 
-  // ---- 开局占营根修正（v1.0.7）：开局翻棋阶段优先抢占空行营 ----
-  // 语义：仅当 (a)搜索最优着为翻棋 (b)仍处开局（暗子≥OPENING_UNREVEALED_MIN）
-  // (c)己方占营数未饱和（<CAMP_SAT）(d)存在"己子入空营"走法 时，以入营着替代翻棋。
-  // 守卫：入营挪位不得造成己方大子(≥45)被即时攻击的净新增（threatMapOf 前后对比）。
-  // 设计边界（v1.0.5 教训）：无界版本的占营修正在中后期同样压制翻棋，实测真人体验为负
-  // （蹲营被动）——本版严格限定在开局窗口，中后期决策与 1.0.3 基线完全一致。
-  const OPENING_UNREVEALED_MIN = 25; // 暗子仍 ≥25 视为开局（约前 1/3 进程，25 次翻棋量）
-  const CAMP_SAT = 3;                // 己方已占行营数达到饱和值后不再强制占营
-
-  function openingCampOverride(state, side, best, actions, enabled = _cfg.openingCamp) {
-    if (!enabled || !best || best.kind !== 'flip') return null;
-    let unrevealed = 0, ownCamps = 0;
-    for (let i = 0; i < state.board.length; i++) {
-      const c = state.board[i];
-      if (!c.piece) continue;
-      if (!c.revealed) unrevealed++;
-      else if (c.piece.side === side && B.terrainAt(i) === 'camp') ownCamps++;
-    }
-    if (unrevealed < OPENING_UNREVEALED_MIN || ownCamps >= CAMP_SAT) return null;
-    const candidates = [];
-    for (const a of actions) {
-      if (a.kind === 'move' && B.terrainAt(a.to) === 'camp' && !state.board[a.to].piece) {
-        candidates.push(a);
-      }
-    }
-    if (!candidates.length) return null;
-    const maxBigLoss = (st, threat) => {
-      let m = 0;
-      for (let i = 0; i < st.board.length; i++) {
-        const l = threat.loss[i];
-        if (l < 45) continue;
-        const c = st.board[i];
-        if (c.piece && c.revealed && c.piece.side === side &&
-            C.IMMOBILE.indexOf(c.piece.type) === -1) m = Math.max(m, l);
-      }
-      return m;
-    };
-    const threat0 = threatMapOf(state, side);
-    const cur = maxBigLoss(state, threat0);
-    // 候选排序：被威胁子入营（逃命+地形兼得）优先，其次子力大者（行营免疫对大子价值更高）
-    candidates.sort((a, b) => {
-      const da = dangerAt(threat0, a.from), db = dangerAt(threat0, b.from);
-      if (da !== db) return db - da;
-      return valueOf(state.board[b.from].piece.type) - valueOf(state.board[a.from].piece.type);
-    });
-    for (const a of candidates) {
-      const s = clone(state);
-      applyOnClone(s, a);
-      if (maxBigLoss(s, threatMapOf(s, side)) <= cur) return a;
-    }
-    return null;
-  }
-
   function chooseHard(state, side, cfg = PRESETS.hard) {
     _cfg = cfg;
     _nodes = 0; _deadline = Date.now() + cfg.time; _lastDepth = 0;
@@ -893,8 +838,6 @@
     try {
       const actions = enumerateActions(state, side);
       if (!actions.length) return null;
-      // 收尾：开局占营根修正（开局最优着为翻棋且可入营时改入营），两个出口共用
-      const finish = (best) => openingCampOverride(state, side, best, actions) || best;
       const threat = threatMapOf(state, side);
       let ordered = orderActions(state, side, actions, threat); // 根节点精确排序
       let bestSoFar = ordered[0]; // 兜底＝静态最优着：任何情况下都有确定走法，不再回退 medium
@@ -921,11 +864,11 @@
           ordered = res.scores.sort((x, y) => y.v - x.v).map((x) => x.a); // best-first 喂下一层
           lastIterMs = Date.now() - t0;
         } catch (e) {
-          if (e instanceof BudgetExceeded) return finish(bestSoFar); // ★ 半途中断 → 返回上一层最优根着
+          if (e instanceof BudgetExceeded) return bestSoFar; // ★ 半途中断 → 返回上一层最优根着
           throw e;
         }
       }
-      return finish(bestSoFar);
+      return bestSoFar;
     } catch (e) {
       if (e instanceof BudgetExceeded) return null; // 理论不可达（内层已捕获）
       return chooseMedium(state, side); // 非预算异常的终极兜底
@@ -944,7 +887,7 @@
 
   NS.Junqi.ai = {
     chooseMove, chooseHard, enumerateActions, evaluate, remainingDistribution,
-    threatMapOf, dangerAt, threatWeight, PRESETS, quiesce, POS_W, openingCampOverride,
+    threatMapOf, dangerAt, threatWeight, PRESETS, quiesce, POS_W,
     lastDepth: () => _lastDepth,
   };
 })();
