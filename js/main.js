@@ -13,7 +13,7 @@
 
   let state = null;
   let mode = 'ai';        // 'ai'=人机 | 'pvp'=双人同屏；模式选择弹窗设定
-  let difficulty = C.DIFFICULTY.HARD; // 默认困难档（下拉框默认项与此一致）
+  let difficulty = C.DIFFICULTY.MASTER; // 默认大师档（下拉框默认项与此一致）
   let aiTimer = null;
   // AI 思考 Worker（后台线程，思考时不冻屏）；不可用时（file:// 等）自动同步降级
   let aiWorker = null;
