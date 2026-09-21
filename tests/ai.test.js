@@ -653,3 +653,48 @@ test('ai: 翻棋无偏 — AI 翻出双方颜色的频率与暗子池真实比�
   assert.ok(Math.abs(z) < 3,
     'AI 翻出玩家色 ' + aiFlipHuman + '/' + aiFlips + ' 应与暗子池比例 ' + (100 * p).toFixed(1) + '% 一致（z=' + z.toFixed(2) + '）');
 });
+
+// ---- 司令阵亡亮军旗：AI 配套（估值中立 + make/unmake 完整性）----
+test('ai: 军旗不计材料 — 敌旗翻开 vs 暗置估值相同（亮旗规则配套）', () => {
+  // 司令阵亡会自动翻开该方军旗。若军旗按 PIECE_VALUE(1000) 计材料，
+  // "吃敌司令→敌旗翻开"会被估成敌材料 +1000 的大亏，AI 将回避击杀敌方司令。
+  // 军旗是终局目标（±100000 终局分 + rush/防御项），材料估值必须为零。
+  const a = emptyState('blue'); place(a, 11, 2, 'flag', 'red');        // 敌旗已翻
+  place(a, 10, 2, 'battalion', 'blue');
+  const b = emptyState('blue'); place(b, 11, 2, 'flag', 'red', false); // 敌旗暗置
+  place(b, 10, 2, 'battalion', 'blue');
+  assert.strictEqual(AI.evaluate(a, 'blue'), AI.evaluate(b, 'blue'),
+    '敌旗翻开不应改变估值（亮旗=纯信息变化）');
+});
+
+test('ai: 司令阵亡亮旗 — 搜索(make/unmake)不泄漏亮旗状态', () => {
+  // 蓝炸弹贴红司令：搜索必然尝试"炸弹换司令"，applyAction 会翻开红旗（第三格），
+  // undoAction 若不恢复，搜索后棋盘将带残留亮旗 → 逐位对比棋盘签名
+  const st = emptyState('blue');
+  place(st, 1, 0, 'bomb', 'blue');
+  place(st, 1, 1, 'commander', 'red');
+  place(st, 11, 4, 'flag', 'red', false);
+  place(st, 10, 4, 'platoon', 'red');   // 红方可动子
+  place(st, 2, 3, 'company', 'blue');   // 蓝方可动子
+  const sig = JSON.stringify(st.board);
+  const cfg = Object.assign({}, AI.PRESETS.hard);
+  AI.chooseHard(st, 'blue', cfg);
+  assert.strictEqual(JSON.stringify(st.board), sig,
+    '搜索后棋盘必须逐位还原（含亮旗格 revealed 复位）');
+  assert.strictEqual(st.board[idx(11, 4)].revealed, false, '红旗暗置状态未被泄漏');
+});
+
+test('ai: 司令阵亡亮旗 — AI 击杀敌司令的估值不吃亏（行为锁）', () => {
+  // 炸弹(35)换敌司令(100)：材料 +65。旧材料口径（旗计 1000）会把该交换估成大亏；
+  // 修复后杀司令方估值应显著为正
+  const st = emptyState('blue');
+  place(st, 1, 0, 'bomb', 'blue');
+  place(st, 1, 1, 'commander', 'red');
+  place(st, 11, 4, 'flag', 'red', false);
+  place(st, 10, 4, 'platoon', 'red');
+  place(st, 2, 3, 'company', 'blue');
+  const before = AI.evaluate(st, 'blue');
+  S.applyMove(st, { kind: 'move', from: idx(1, 0), to: idx(1, 1) }); // 炸弹换司令
+  const after = AI.evaluate(st, 'blue');
+  assert.ok(after > before, `炸弹换司令应为正收益交换（before=${before.toFixed(0)} after=${after.toFixed(0)}）`);
+});

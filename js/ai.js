@@ -299,6 +299,10 @@
     for (let i = 0; i < state.board.length; i++) {
       const cell = state.board[i];
       if (!cell.piece) continue;
+      // 军旗不计材料：军旗是终局目标（夺旗=±100000 终局分）。若按 PIECE_VALUE 计 1000，
+      // "吃掉敌方司令→敌旗翻开"会被估成敌材料 +1000 的大亏，AI 将系统性回避击杀敌方司令。
+      // 亮旗是纯信息变化（配合 rush/军旗防御项生效），材料估值必须为零。
+      if (cell.piece.type === 'flag') continue;
       if (cell.revealed) {
         score += (cell.piece.side === side ? 1 : -1) * valueOf(cell.piece.type);
       } else if (totalUnrevealed > 0) {
@@ -310,6 +314,7 @@
         for (const key in rem) {
           const p = rem[key] / totalUnrevealed;
           const [type, s2] = key.split(':');
+          if (type === 'flag') continue; // 军旗不入期望（与上面"不计材料"保持一致）
           ev += p * valueOf(type) * (s2 === side ? 0.5 : -0.5);
         }
         score += ev * 0.5; // 不确定折扣
@@ -461,7 +466,7 @@
       prevTurn: state.turn, prevStale: state.staleCount, prevWinner: state.winner,
       prevMinesRed: state.minesLost.red, prevMinesBlue: state.minesLost.blue,
       prevSidesAssigned: state.sidesAssigned, prevControllers: null,
-      flipCell: null, fromCell: null, toCell: null, prevCaptured: null,
+      flipCell: null, fromCell: null, toCell: null, prevCaptured: null, revealedFlagIdx: null,
     };
     if (action.kind === 'flip') {
       const cell = state.board[action.index];
@@ -493,6 +498,8 @@
       undo.prevCaptured = state.captured ? Object.assign({}, state.captured) : null; // applyBattle 会 bump captured，整对象备份
       const info = STATE.applyBattle(state, from, to);
       if (info.flagCaptured) state.winner = p.side;
+      // 司令阵亡亮旗：applyBattle 可能额外翻开军旗格（from/to 之外的第三格），撤销时须复位
+      if (info.revealedFlags && info.revealedFlags.length) undo.revealedFlagIdx = info.revealedFlags;
       state.staleCount = 0;
     } else {
       undo.fromCell = fcell;
@@ -521,6 +528,9 @@
     if (undo.fromCell) {
       state.board[action.from] = undo.fromCell; // 回填原 cell 对象（applyBattle 是替换式写法）
       state.board[action.to] = undo.toCell;
+    }
+    if (undo.revealedFlagIdx) {
+      for (const i of undo.revealedFlagIdx) state.board[i].revealed = false;
     }
     if (undo.prevCaptured) state.captured = undo.prevCaptured;
   }

@@ -162,6 +162,12 @@
   // 落子后的音效（玩家 / 同步 AI / Worker 三路径共用）：
   // 先播动作音（翻/落/吃/炸/雷），若刚终局则延迟 350ms 让动作音先落再奏胜负小调
   function soundAfterApply() {
+    // 司令阵亡亮军旗提示（三路径共用）：本次交战触发了军旗自动翻开
+    const lm = state.lastMove;
+    if (lm && lm.kind === 'move' && lm.battle && lm.battle.revealedFlags && lm.battle.revealedFlags.length) {
+      const fs = state.board[lm.battle.revealedFlags[0]].piece.side;
+      UI.toast((fs === 'red' ? '红方' : '蓝方') + '司令阵亡，军旗显形！');
+    }
     const name = SFX.soundFor(state.lastMove);
     if (name) SFX.play(name);
     if (state.winner) {

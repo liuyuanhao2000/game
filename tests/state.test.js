@@ -350,3 +350,75 @@ test('state: lastMove records flip/move/battle outcomes', () => {
   S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
   assert.strictEqual(st.lastMove.battle.outcome, 'both');
 });
+
+// ---- 司令阵亡亮军旗（司令死 → 该方军旗自动翻开）----
+test('state: 炸弹换司令 → 司令方军旗自动翻开', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'bomb', 'red');
+  place(b, idx(1,1), 'commander', 'blue');
+  place(b, idx(10,4), 'company', 'blue');  // 蓝方另有可动子（防困毙判负干扰）
+  place(b, idx(10,0), 'company', 'red');   // 红方另有可动子
+  place(b, idx(9,4), 'flag', 'blue', false); // 蓝旗暗置
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.controllers={red:'human',blue:'ai'};
+  assert.strictEqual(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }), true);
+  assert.strictEqual(st.board[idx(9,4)].revealed, true, '蓝方司令阵亡 → 蓝旗自动翻开');
+  assert.ok(st.lastMove.battle.revealedFlags.includes(idx(9,4)), 'lastMove 记录亮旗格');
+});
+
+test('state: 司令撞雷阵亡 → 攻击方（司令方）军旗翻开', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'commander', 'red');
+  place(b, idx(1,1), 'mine', 'blue');
+  place(b, idx(10,4), 'company', 'blue');
+  place(b, idx(10,0), 'company', 'red');
+  place(b, idx(0,2), 'flag', 'red', false);  // 红旗暗置
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.controllers={red:'human',blue:'ai'};
+  assert.strictEqual(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }), true);
+  assert.strictEqual(st.board[idx(0,2)].revealed, true, '红方司令撞雷阵亡 → 红旗自动翻开');
+  assert.strictEqual(st.minesLost.blue, 0, '雷存活，不计拔除');
+});
+
+test('state: 司令对司令同归 → 双方军旗同时翻开', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'commander', 'red');
+  place(b, idx(1,1), 'commander', 'blue');
+  place(b, idx(10,4), 'company', 'blue');
+  place(b, idx(10,0), 'company', 'red');
+  place(b, idx(0,2), 'flag', 'red', false);
+  place(b, idx(9,4), 'flag', 'blue', false);
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.controllers={red:'human',blue:'ai'};
+  assert.strictEqual(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }), true);
+  assert.strictEqual(st.board[idx(0,2)].revealed, true, '红司令阵亡 → 红旗翻开');
+  assert.strictEqual(st.board[idx(9,4)].revealed, true, '蓝司令阵亡 → 蓝旗翻开');
+  assert.strictEqual(st.lastMove.battle.revealedFlags.length, 2);
+});
+
+test('state: 普通吃子不触发亮旗', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'commander', 'red');
+  place(b, idx(1,1), 'platoon', 'blue');
+  place(b, idx(10,4), 'company', 'blue');
+  place(b, idx(9,4), 'flag', 'blue', false);
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.controllers={red:'human',blue:'ai'};
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.board[idx(9,4)].revealed, false, '无人阵亡司令 → 军旗保持暗置');
+  assert.deepStrictEqual(st.lastMove.battle.revealedFlags, []);
+});
+
+test('state: 军旗已翻开时司令阵亡不再重复记录', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'bomb', 'red');
+  place(b, idx(1,1), 'commander', 'blue');
+  place(b, idx(10,4), 'company', 'blue');
+  place(b, idx(10,0), 'company', 'red');
+  place(b, idx(9,4), 'flag', 'blue'); // 蓝旗已翻开
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.controllers={red:'human',blue:'ai'};
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.strictEqual(st.board[idx(9,4)].revealed, true, '仍为翻开状态');
+  assert.deepStrictEqual(st.lastMove.battle.revealedFlags, [], '已翻开的旗不重复记录');
+});

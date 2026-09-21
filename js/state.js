@@ -86,7 +86,26 @@
     else if (!res.to || !res.to.piece) outcome = 'both';
     else if (res.to.piece === p) outcome = 'win';
     else outcome = 'lose';
-    return { flagCaptured: res.flagCaptured, outcome, defender };
+    // 司令阵亡亮军旗（经典规则）：某方司令死亡 → 该方军旗自动翻开（位置对双方公开）。
+    // 司令对司令同归则双方军旗同时翻开；军旗已被吃/已翻开则无事发生。
+    const revealedFlags = [];
+    const pDied = p.type === 'commander' && !(res.to && res.to.piece === p);
+    const dDied = defender.type === 'commander' && !(res.to && res.to.piece === defender);
+    if (pDied || dDied) {
+      const sides = [];
+      if (pDied) sides.push(p.side);
+      if (dDied && defender.side !== p.side) sides.push(defender.side);
+      for (const s of sides) {
+        for (let i = 0; i < state.board.length; i++) {
+          const c = state.board[i];
+          if (c.piece && c.piece.type === 'flag' && c.piece.side === s && !c.revealed) {
+            c.revealed = true;
+            revealedFlags.push(i);
+          }
+        }
+      }
+    }
+    return { flagCaptured: res.flagCaptured, outcome, defender, revealedFlags };
   }
 
   // 应用一个动作。返回 true 表示成功应用（即使触发胜负也算成功）。
@@ -151,7 +170,8 @@
         if (info.flagCaptured) state.winner = p.side;
         state.staleCount = 0; // 吃子重置
         state.lastMove = { kind: 'move', from, to, side: p.side, type: p.type,
-          battle: { side: info.defender.side, type: info.defender.type, outcome: info.outcome } };
+          battle: { side: info.defender.side, type: info.defender.type, outcome: info.outcome,
+                    revealedFlags: info.revealedFlags } }; // 司令阵亡亮旗：本次自动翻开的军旗格
       } else {
         // 走到空格
         state.board[to] = { piece: p, revealed: true };
