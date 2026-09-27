@@ -422,3 +422,22 @@ test('state: 军旗已翻开时司令阵亡不再重复记录', () => {
   assert.strictEqual(st.board[idx(9,4)].revealed, true, '仍为翻开状态');
   assert.deepStrictEqual(st.lastMove.battle.revealedFlags, [], '已翻开的旗不重复记录');
 });
+
+// ---- v1.0.9：prevMove 记录语义（供 AI 反向走子检测）----
+test('state: prevMove — move 记录行动者，flip 清空行动者（非被翻子颜色）', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'platoon', 'red');
+  place(b, idx(1,1), 'company', 'blue', false); // 暗子：蓝方子但由红方翻
+  place(b, idx(10,4), 'company', 'blue');       // 蓝方可动子
+  const st = makeState(b);
+  st.sidesAssigned=true; st.turn='red'; st.controllers={red:'human',blue:'ai'};
+  st.prevMove = { red: { from: idx(0,0), to: idx(0,1) }, blue: null };
+  // 红方翻出蓝子：行动者是红 → prevMove.red 清空，blue 不动
+  S.applyMove(st, { kind:'flip', index: idx(1,1) });
+  assert.strictEqual(st.prevMove.red, null, '翻棋清空行动者（红）的 prevMove');
+  assert.strictEqual(st.prevMove.blue, null, '被翻子颜色方（蓝）不受影响');
+  // 红方走子：记录 {from,to}（翻棋后回合已切蓝，设回红）
+  st.turn = 'red';
+  S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
+  assert.deepStrictEqual(st.prevMove.red, { from: idx(1,0), to: idx(1,1) }, 'move 记录行动者上一步');
+});

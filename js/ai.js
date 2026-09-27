@@ -262,9 +262,11 @@
     //  更高节点预算）。
     // openingCamp（v1.0.7）：开局占营根修正——开局窗口内最优着为翻棋且可入空营时改入营，
     // 严格限定开局（暗子≥25）+占营饱和（<3），中后期与基线一致。
+    // repPenalty（v1.0.9）：根级反向走子惩罚，杀掉营内外 A↔B 横跳（"行营内来回走有点呆"）。
+    // staleDecay（v1.0.9）：领先方正分随困局进度衰减，给"求进展"梯度（翻棋/吃子保值）。
     // positional：位置项保持关闭（30 局 A/B 负收益：伞控诱导"围营跳舞"）；机制经 evaluate(opts.positional) 保留供单测。
-    hard:   { time: 800,  nodes: 6000,  maxDepth: 8,  flipK: 3, flipPMin: 0,    quiesce: true, qdepth: 4, qDelta: 20, positional: false, openingCamp: true, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
-    master: { time: 4500, nodes: 35000, maxDepth: 12, flipK: 5, flipPMin: 0.06, quiesce: true, qdepth: 4, qDelta: 20, positional: false, openingCamp: true, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
+    hard:   { time: 800,  nodes: 6000,  maxDepth: 8,  flipK: 3, flipPMin: 0,    quiesce: true, qdepth: 4, qDelta: 20, positional: false, openingCamp: true, repPenalty: true, staleDecay: true, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
+    master: { time: 4500, nodes: 35000, maxDepth: 12, flipK: 5, flipPMin: 0.06, quiesce: true, qdepth: 4, qDelta: 20, positional: false, openingCamp: true, repPenalty: true, staleDecay: true, flipCollapse: false, flipCollapseDepth: 2, makeUnmake: true },
   };
   const ASPIRATION = 40; // 迭代加深 aspiration 半宽（围绕上轮值开窗，失败则全窗口重搜）
   let _cfg = PRESETS.hard; // 当前搜索配置（chooseHard 入口设置，finally 复位为 hard 语义）
@@ -442,6 +444,11 @@
         score += Math.min(12, rush);
       }
     }
+    // ---- 领先方拖和衰退（求进展梯度，见 staleDecayK 注释）----
+    if (score > 0) {
+      const k = staleDecayK(state, opts);
+      if (k > 0) score *= (1 - k);
+    }
     return score;
   }
 
@@ -453,6 +460,7 @@
       turn: state.turn, controllers: { red: (state.controllers || {}).red || null, blue: (state.controllers || {}).blue || null },
       sidesAssigned: state.sidesAssigned, winner: state.winner, staleCount: state.staleCount,
       minesLost: { red: state.minesLost.red, blue: state.minesLost.blue },
+      prevMove: state.prevMove ? { red: state.prevMove.red, blue: state.prevMove.blue } : undefined,
       captured: Object.assign({}, state.captured || {}),
       onChange: null,
     };
@@ -645,13 +653,18 @@
     }
     const stand = evaluate(state, side);
     if (qleft <= 0) return stand;
+    // delta 剪枝安全余量：吃子会重置 staleCount → 领先方拖和衰减的分恢复 stand×k/(1−k)，
+    // 该"恢复奖金"不在 stand±valueOf 的建模内，须计入界内，否则高 stale 阶段会系统性误剪
+    // 有价值的捕获——恰好发生在衰减机制旨在推动进展的阶段（方向性错误）。
+    const k = staleDecayK(state);
+    const qMargin = _cfg.qDelta + (k > 0 && stand > 0 ? Math.abs(stand) * k / (1 - k) : 0);
     if (state.turn === side) {
       // max 分支
       if (stand >= beta) return stand;
       let best = stand;
       if (stand > alpha) alpha = stand;
       for (const m of captureActions(state)) {
-        if (stand + valueOf(state.board[m.to].piece.type) + _cfg.qDelta < alpha) continue; // delta 剪枝
+        if (stand + valueOf(state.board[m.to].piece.type) + qMargin < alpha) continue; // delta 剪枝
         let v;
         if (_cfg.makeUnmake === false) {
           const s = clone(state);
@@ -677,7 +690,7 @@
     let best = stand;
     if (stand < beta) beta = stand;
     for (const m of captureActions(state)) {
-      if (stand - valueOf(state.board[m.to].piece.type) - _cfg.qDelta > beta) continue; // delta 剪枝
+      if (stand - valueOf(state.board[m.to].piece.type) - qMargin > beta) continue; // delta 剪枝
       let v;
       if (_cfg.makeUnmake === false) {
         const s = clone(state);
@@ -823,11 +836,13 @@
   }
 
   // 根搜索：按窗口评估根走法（兄弟间窗口 (max(bestV,alpha), beta)，fail-high 截断剩余）
-  function searchRoot(state, side, actions, depth, alpha, beta) {
+  // repMap：根级反向走子惩罚（action 对象身份 → 罚分），从估值中扣除
+  function searchRoot(state, side, actions, depth, alpha, beta, repMap) {
     let best = null, bestV = -Infinity;
     const scores = [];
     for (const a of actions) {
-      const v = actionValue(state, a, side, depth, bestV > alpha ? bestV : alpha, beta);
+      const v = actionValue(state, a, side, depth, bestV > alpha ? bestV : alpha, beta) -
+        (repMap ? (repMap.get(a) || 0) : 0);
       scores.push({ a, v });
       if (v > bestV) { bestV = v; best = a; }
       if (bestV >= beta) break; // fail-high：剩余根着截断（外层按失败重搜规则修正）
@@ -841,6 +856,36 @@
     if (slot.some((k) => k.from === move.from && k.to === move.to)) return;
     slot.unshift({ from: move.from, to: move.to });
     if (slot.length > 2) slot.length = 2;
+  }
+
+  // ---- 反向走子惩罚（v1.0.9，根级）：杀掉"营内外 A↔B 横跳" ----
+  // 中局无战术目标时安静走法估值持平，搜索在等值着间任选 → 可见的来回横跳。
+  // 根级对"恰好撤销自己上一步"的安静着扣分；战术收益可覆盖、吃子/逃命豁免。
+  // 深层节点不罚：横跳是根现象，且免每节点查 prevMove 的开销。
+  const REP_PENALTY = 3; // > 机动性噪声(~2)；< 排长(12)/ASPIRATION(40)/qDelta(20)，战术收益可覆盖
+  function repetitionPenalty(state, side, action, threat, enabled = _cfg.repPenalty) {
+    if (!enabled || !action || action.kind !== 'move') return 0;
+    const pm = (state.prevMove || {})[side];
+    if (!pm || pm.from === null) return 0;
+    if (pm.from !== action.to || pm.to !== action.from) return 0;
+    if (state.board[action.to].piece) return 0;                  // 豁免：反向吃子=进展（重置 staleCount）
+    if (threat && dangerAt(threat, action.from) > 0) return 0;   // 豁免：被威胁子撤退（罚分会压制小子逃命）
+    return REP_PENALTY;
+  }
+
+  // ---- 领先方拖和衰退（v1.0.9）：给"求进展"梯度，解决"没有长期计划" ----
+  // 困局判和阈值(80 ply)远在搜索视野(8/12)之外：领先方看不到"静走→和棋(0)<当前+X"。
+  // 衰减让领先方的正分优势随无吃无翻的静走流失——翻棋/吃子（重置 staleCount）保值，
+  // 于是领先且无事可做时 AI 会主动翻棋/寻战而不是横跳。
+  // 仅衰减正分是有意设计：负分向 0 衰 = 奖励落后方跳舞求和（draw=0 > 负分），与"蹲营和棋
+  // 体验为负"的历史教训冲突；落后方龟缩是合法防御强度。
+  // 军旗防御/rush 项被衰减看似危险实则无害：真实夺旗路径必经拔雷（吃子重置 staleCount）。
+  const STALE_DECAY_MAX = 0.5; // sc=80 时正分最多腰斩；回退路径：调 0.25 或 PRESETS.staleDecay=false
+  function staleDecayK(state, opts) {
+    const on = opts ? opts.staleDecay !== false : _cfg.staleDecay !== false;
+    if (!on) return 0;
+    const sc = Math.min(state.staleCount || 0, C.STALE_LIMIT - 1); // clamp：外部裸调时防 sc≥80
+    return sc <= 0 ? 0 : STALE_DECAY_MAX * sc / C.STALE_LIMIT;
   }
 
   // ---- 开局占营根修正（v1.0.7）：开局翻棋阶段优先抢占空行营 ----
@@ -906,7 +951,19 @@
       // 收尾：开局占营根修正（开局最优着为翻棋且可入营时改入营），两个出口共用
       const finish = (best) => openingCampOverride(state, side, best, actions) || best;
       const threat = threatMapOf(state, side);
+      // 反向走子惩罚预计算（同一根状态下迭代间恒定 → aspiration 中心自洽）
+      const repMap = new Map();
+      let anyRep = false;
+      for (const a of actions) {
+        const pen = repetitionPenalty(state, side, a, threat);
+        if (pen) { repMap.set(a, pen); anyRep = true; }
+      }
       let ordered = orderActions(state, side, actions, threat); // 根节点精确排序
+      if (anyRep) {
+        // 静态兜底（depth-1 即超预算时 bestSoFar=ordered[0]）也须避开横跳着：
+        // 稳定排序把被罚着移到同组末位（sort 稳定性保证其余相对次序不变）
+        ordered = ordered.slice().sort((a, b) => (repMap.get(a) || 0) - (repMap.get(b) || 0));
+      }
       let bestSoFar = ordered[0]; // 兜底＝静态最优着：任何情况下都有确定走法，不再回退 medium
       let lastIterMs = 0;
       let lastBest = null; // 上一迭代根值 → aspiration 窗口中心
@@ -919,11 +976,11 @@
         const alpha0 = full ? -Infinity : lastBest - ASPIRATION;
         const beta0 = full ? Infinity : lastBest + ASPIRATION;
         try {
-          let res = searchRoot(state, side, ordered, depth, alpha0, beta0);
+          let res = searchRoot(state, side, ordered, depth, alpha0, beta0, repMap);
           if (!full && (res.bestV <= alpha0 || res.bestV >= beta0)) {
             // 窗口失败：有预算则全窗口重搜；否则本层不提交、结束迭代
             if (Date.now() + 50 >= _deadline) break;
-            res = searchRoot(state, side, ordered, depth, -Infinity, Infinity);
+            res = searchRoot(state, side, ordered, depth, -Infinity, Infinity, repMap);
           }
           bestSoFar = res.best; // ★ 只有完整跑完（或重搜完成）的深度才提交
           _lastDepth = depth;
@@ -954,7 +1011,7 @@
 
   NS.Junqi.ai = {
     chooseMove, chooseHard, enumerateActions, evaluate, remainingDistribution,
-    threatMapOf, dangerAt, threatWeight, PRESETS, quiesce, POS_W, openingCampOverride,
+    threatMapOf, dangerAt, threatWeight, PRESETS, quiesce, POS_W, openingCampOverride, repetitionPenalty,
     lastDepth: () => _lastDepth,
   };
 })();

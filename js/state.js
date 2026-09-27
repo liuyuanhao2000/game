@@ -52,6 +52,7 @@
       minesLost: { red: 0, blue: 0 }, // 每方已损失地雷数；拔满 3 才可吃其军旗
       captured: {},            // 已被吃/移除的子：'type:side' -> 数量（供 AI 剩余分布扣减）
       lastMove: null,           // 最近一步描述（供 UI 标记/提示），null 表示无
+      prevMove: { red: null, blue: null }, // 各方上一步 move 的 {from,to}（翻棋清空；供 AI 反向走子检测）
       onChange: null,           // 回调
     };
   }
@@ -113,6 +114,7 @@
     if (state.winner) return false;
 
     if (action.kind === 'flip') {
+      const actor = state.turn; // 行动者（回合切换前捕获）——供 prevMove 清空
       const i = action.index;
       if (!Number.isInteger(i) || i < 0 || i >= C.CELL_COUNT) return false;
       const cell = state.board[i];
@@ -136,6 +138,10 @@
         state.turn = C.opposite(state.turn);
       }
       state.staleCount = 0; // 翻棋重置困局计数
+      // 翻棋不可被走子"反向"，且隔了一手翻棋的回位不算横跳 → 清空行动者的 prevMove。
+      // 行动者须在回合切换前捕获（此处 turn 已切到对手）；不能用 lastMove.side——
+      // 那是被翻子的颜色而非行动者；未定阵营首翻时 actor=null 跳过，此后按正式回合覆盖
+      if (actor) state.prevMove = Object.assign({}, state.prevMove, { [actor]: null });
       state.lastMove = { kind: 'flip', index: action.index, side: cell.piece.side, type: cell.piece.type };
       state.winner = R.checkWinner(state);
       notify(state);
@@ -179,6 +185,8 @@
         state.staleCount += 1; // 无吃无翻的走子递增
         state.lastMove = { kind: 'move', from, to, side: p.side, type: p.type, battle: null };
       }
+      // 记录行动者上一步 move（供 AI 反向走子检测；p.side 即行动者）
+      state.prevMove = Object.assign({}, state.prevMove, { [p.side]: { from, to } });
       state.turn = C.opposite(state.turn);
       if (!state.winner) state.winner = R.checkWinner(state);
       notify(state);

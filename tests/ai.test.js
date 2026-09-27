@@ -399,7 +399,8 @@ test('ai: evaluate rush term — press toward enemy flag once its mines are clea
 
 // ============ Worker 前提：纯数据快照可驱动 AI ============
 function boardSig(st) {
-  return JSON.stringify(st.board) + '|' + st.turn + '|' + JSON.stringify(st.minesLost) + '|' + JSON.stringify(st.captured);
+  return JSON.stringify(st.board) + '|' + st.turn + '|' + JSON.stringify(st.minesLost) + '|' +
+    JSON.stringify(st.captured) + '|' + JSON.stringify(st.prevMove) + '|' + st.staleCount;
 }
 
 test('ai: JSON snapshot drives chooseMove identically; live state untouched', () => {
@@ -697,4 +698,84 @@ test('ai: 司令阵亡亮旗 — AI 击杀敌司令的估值不吃亏（行为�
   S.applyMove(st, { kind: 'move', from: idx(1, 0), to: idx(1, 1) }); // 炸弹换司令
   const after = AI.evaluate(st, 'blue');
   assert.ok(after > before, `炸弹换司令应为正收益交换（before=${before.toFixed(0)} after=${after.toFixed(0)}）`);
+});
+
+// ---- v1.0.9：反向走子惩罚（repetitionPenalty）----
+test('ai: 反向走子惩罚 — 撤销自己上一步的安静着被罚', () => {
+  const st = emptyState('blue');
+  place(st, 2, 0, 'division', 'blue'); // 蓝师长 (2,0)，(2,1) 为空行营
+  st.prevMove = { red: null, blue: { from: idx(2, 1), to: idx(2, 0) } }; // 蓝上一步出营
+  const actions = AI.enumerateActions(st, 'blue');
+  const a = actions.find((x) => x.kind === 'move' && x.from === idx(2, 0) && x.to === idx(2, 1));
+  assert.ok(a, '前置：反向着（回营）存在');
+  assert.strictEqual(AI.repetitionPenalty(st, 'blue', a, null, true), 3, '反向回营应被罚 3');
+});
+
+test('ai: 反向走子惩罚 — 反向吃子豁免（吃子=进展）', () => {
+  const st = emptyState('blue');
+  place(st, 1, 0, 'division', 'blue');
+  place(st, 1, 1, 'platoon', 'red');
+  st.prevMove = { red: null, blue: { from: idx(1, 1), to: idx(1, 0) } };
+  const actions = AI.enumerateActions(st, 'blue');
+  const a = actions.find((x) => x.kind === 'move' && x.from === idx(1, 0) && x.to === idx(1, 1));
+  assert.ok(a, '前置：反向吃子着法存在');
+  assert.strictEqual(AI.repetitionPenalty(st, 'blue', a, null, true), 0, '吃子豁免');
+});
+
+test('ai: 反向走子惩罚 — 被威胁子反向撤退豁免', () => {
+  const st = emptyState('blue');
+  place(st, 1, 0, 'platoon', 'blue');   // 被 (2,0) 红司令威胁
+  place(st, 2, 0, 'commander', 'red');
+  st.prevMove = { red: null, blue: { from: idx(1, 1), to: idx(1, 0) } };
+  const threat = AI.threatMapOf(st, 'blue');
+  assert.strictEqual(threat.loss[idx(1, 0)], 12, '前置：排长被威胁');
+  const actions = AI.enumerateActions(st, 'blue');
+  const a = actions.find((x) => x.kind === 'move' && x.from === idx(1, 0) && x.to === idx(1, 1));
+  assert.ok(a, '前提：反向撤退着法存在');
+  assert.strictEqual(AI.repetitionPenalty(st, 'blue', a, threat, true), 0, '逃命豁免');
+  assert.strictEqual(AI.repetitionPenalty(st, 'blue', a, null, true), 3, '无威胁信息时仍罚（对照）');
+});
+
+test('ai: 反向走子惩罚 — 开关/旧状态防御/翻棋不受罚', () => {
+  const st = emptyState('blue');
+  place(st, 2, 0, 'division', 'blue');
+  st.prevMove = { red: null, blue: { from: idx(2, 1), to: idx(2, 0) } };
+  const actions = AI.enumerateActions(st, 'blue');
+  const a = actions.find((x) => x.kind === 'move' && x.from === idx(2, 0) && x.to === idx(2, 1));
+  assert.strictEqual(AI.repetitionPenalty(st, 'blue', a, null, false), 0, 'enabled=false 不罚');
+  assert.strictEqual(AI.repetitionPenalty(st, 'blue', { kind: 'flip', index: 5 }, null, true), 0, '翻棋不罚');
+  delete st.prevMove;
+  assert.strictEqual(AI.repetitionPenalty(st, 'blue', a, null, true), 0, '旧状态无 prevMove 字段不罚');
+});
+
+// ---- v1.0.9：领先方拖和衰退（staleDecay）----
+test('ai: 领先方拖和衰退 — 正分随 stale 收缩、负分不变、开关可关', () => {
+  const mk = () => {
+    const st = emptyState('blue');
+    place(st, 5, 0, 'commander', 'blue'); // 蓝司令 vs 红排长 → 蓝方正分
+    place(st, 5, 1, 'platoon', 'red');
+    return st;
+  };
+  const a = mk(), b = mk(), c = mk();
+  b.staleCount = 40; c.staleCount = 40;
+  const E0 = AI.evaluate(a, 'blue');
+  assert.ok(E0 > 0, '前置：蓝方领先（E0=' + E0.toFixed(1) + '）');
+  assert.ok(AI.evaluate(a, 'red') < 0, '前置：红方落后');
+  assert.strictEqual(AI.evaluate(b, 'blue'), E0 * 0.75, 'sc=40 → k=0.25，正分 ×0.75');
+  // 注意 evaluate 的 opts 语义陷阱：传任意 opts 会默认打开 positional（历史设计），
+  // 须显式 { positional: false, staleDecay: false } 才是"纯关衰减"对照
+  assert.strictEqual(AI.evaluate(b, 'blue', { positional: false, staleDecay: false }), E0, 'opts 关闭不衰减');
+  assert.strictEqual(AI.evaluate(c, 'red'), AI.evaluate(a, 'red'), '负分不衰减（防奖励落后方舞和）');
+  assert.strictEqual(AI.evaluate(mk(), 'blue', { positional: false, staleDecay: false }), E0, 'sc=0 时关闭与否等价');
+});
+
+test('ai: 反向走子惩罚 — chooseHard 不选撤销自己上一步的安静着', () => {
+  const st = emptyState('blue');
+  place(st, 2, 0, 'division', 'blue');   // 蓝师长 (2,0)，可回营 (2,1) 或铁路滑行
+  place(st, 10, 2, 'company', 'red');    // 红方远处可动子（防困毙，无接触）
+  st.prevMove = { red: null, blue: { from: idx(2, 1), to: idx(2, 0) } }; // 蓝上一步出营
+  const cfg = Object.assign({}, AI.PRESETS.hard);
+  const a = AI.chooseHard(st, 'blue', cfg);
+  assert.ok(!(a.kind === 'move' && a.from === idx(2, 0) && a.to === idx(2, 1)),
+    '不应选反向着回营，got ' + JSON.stringify(a));
 });
