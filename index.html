@@ -2,28 +2,33 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#17181c">
   <title>军旗翻翻棋</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="app">
     <header class="topbar">
-      <h1>军旗翻翻棋</h1>
-      <span class="version" id="version" title="版本号">v1.0.0</span>
-      <div class="controls">
-        <label id="difficulty-wrap">难度：
-          <select id="difficulty">
-            <option value="easy">简单</option>
-            <option value="medium">普通</option>
-            <option value="hard">困难</option>
-            <option value="master" selected>大师</option>
-          </select>
-        </label>
-        <button id="sfx-toggle" title="音效开关">🔊 音效</button>
-        <button id="switch-mode" title="切换对战模式">换模式</button>
-        <button id="restart">重新开局</button>
-        <button id="rules-btn">规则</button>
+      <div class="topbar-row topbar-row-main">
+        <div class="brand">
+          <h1>军旗翻翻棋</h1>
+          <span class="version" id="version" title="版本号">v1.1.0</span>
+        </div>
+        <div class="top-actions">
+          <button id="sfx-toggle" class="icon-btn" title="音效开关" aria-label="音效开关" aria-pressed="true">🔊</button>
+          <button id="rules-btn" class="icon-btn" title="规则" aria-label="规则">?</button>
+        </div>
+      </div>
+      <div class="topbar-row">
+        <div class="seg" id="difficulty-wrap" role="group" aria-label="AI 难度">
+          <button type="button" data-diff="easy" aria-pressed="false">简单</button>
+          <button type="button" data-diff="medium" aria-pressed="false">普通</button>
+          <button type="button" data-diff="hard" aria-pressed="false">困难</button>
+          <button type="button" data-diff="master" class="active" aria-pressed="true">大师</button>
+        </div>
+        <button id="switch-mode" class="btn-ghost" title="切换对战模式">换模式</button>
+        <button id="restart" class="btn-seal">重新开局</button>
       </div>
     </header>
 
@@ -34,46 +39,50 @@
 
     <div class="battlefield">
       <!-- 左栏：未翻棋子透视（剧透模式，按阵营分列）+ 拔雷进度 -->
-      <aside class="panel panel-left" aria-label="记牌器：未翻棋子与拔雷进度">
-        <h3 class="panel-title">未翻透视</h3>
-        <div class="hidden-group">
-          <h4 class="group-title group-red">红方未翻</h4>
-          <div class="chips" id="hidden-red"></div>
-        </div>
-        <div class="hidden-group">
-          <h4 class="group-title group-blue">蓝方未翻</h4>
-          <div class="chips" id="hidden-blue"></div>
-        </div>
-        <div class="mine-meter">
-          <div class="meter-row">
-            <span class="meter-label meter-red">红方军旗告急</span>
-            <div class="meter" id="meter-red"><i></i><i></i><i></i></div>
-            <span class="meter-num" id="meter-red-num">0/3</span>
+      <details class="panel panel-left" id="panel-spy" aria-label="记牌器：未翻棋子与拔雷进度" open>
+        <summary class="panel-title">未翻透视</summary>
+        <div class="panel-body">
+          <div class="hidden-group">
+            <h4 class="group-title group-red">红方未翻</h4>
+            <div class="chips" id="hidden-red"></div>
           </div>
-          <div class="meter-row">
-            <span class="meter-label meter-blue">蓝方军旗告急</span>
-            <div class="meter" id="meter-blue"><i></i><i></i><i></i></div>
-            <span class="meter-num" id="meter-blue-num">0/3</span>
+          <div class="hidden-group">
+            <h4 class="group-title group-blue">蓝方未翻</h4>
+            <div class="chips" id="hidden-blue"></div>
+          </div>
+          <div class="mine-meter">
+            <div class="meter-row">
+              <span class="meter-label meter-red">红方军旗告急</span>
+              <div class="meter" id="meter-red"><i></i><i></i><i></i></div>
+              <span class="meter-num" id="meter-red-num">0/3</span>
+            </div>
+            <div class="meter-row">
+              <span class="meter-label meter-blue">蓝方军旗告急</span>
+              <div class="meter" id="meter-blue"><i></i><i></i><i></i></div>
+              <span class="meter-num" id="meter-blue-num">0/3</span>
+            </div>
           </div>
         </div>
-      </aside>
+      </details>
 
       <div class="board-wrap">
         <div id="board" class="board"></div>
       </div>
 
       <!-- 右栏：双方阵亡棋子 -->
-      <aside class="panel panel-right" aria-label="记牌器：双方阵亡棋子">
-        <h3 class="panel-title">阵亡名册</h3>
-        <div class="lost-group">
-          <h4 class="group-title group-red">红方阵亡 <span class="lost-count" id="lost-red-count">0</span></h4>
-          <div class="chips chips-lost" id="lost-red"></div>
+      <details class="panel panel-right" id="panel-lost" aria-label="记牌器：双方阵亡棋子" open>
+        <summary class="panel-title">阵亡名册</summary>
+        <div class="panel-body">
+          <div class="lost-group">
+            <h4 class="group-title group-red">红方阵亡 <span class="lost-count" id="lost-red-count">0</span></h4>
+            <div class="chips chips-lost" id="lost-red"></div>
+          </div>
+          <div class="lost-group">
+            <h4 class="group-title group-blue">蓝方阵亡 <span class="lost-count" id="lost-blue-count">0</span></h4>
+            <div class="chips chips-lost" id="lost-blue"></div>
+          </div>
         </div>
-        <div class="lost-group">
-          <h4 class="group-title group-blue">蓝方阵亡 <span class="lost-count" id="lost-blue-count">0</span></h4>
-          <div class="chips chips-lost" id="lost-blue"></div>
-        </div>
-      </aside>
+      </details>
     </div>
 
     <!-- 模式选择弹窗（开局必选；「换模式」按钮可再次打开）-->
@@ -144,22 +153,36 @@
   <script src="js/ui.js"></script>
   <script src="js/main.js"></script>
   <script>
-    // 控件绑定
-    document.getElementById('difficulty').addEventListener('change', (e) => {
-      Junqi.main.setDifficulty(e.target.value);
+    // ---- 难度分段选择器（与弹窗内 select 双向同步） ----
+    const segWrap = document.getElementById('difficulty-wrap');
+    const modeDiffSel = document.getElementById('mode-difficulty');
+    let currentDiff = 'master';
+    const syncDiffUI = (v) => {
+      currentDiff = v;
+      segWrap.querySelectorAll('button[data-diff]').forEach((b) => {
+        const on = b.dataset.diff === v;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+      modeDiffSel.value = v;
+    };
+    syncDiffUI(currentDiff); // 启动时统一初始状态（active / aria-pressed / 弹窗 select）
+    segWrap.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-diff]');
+      if (!b) return;
+      syncDiffUI(b.dataset.diff);
+      Junqi.main.setDifficulty(b.dataset.diff);
     });
 
     // 模式选择：开局弹窗必选；pvp 模式隐藏顶栏难度
     const modeModal = document.getElementById('mode-modal');
-    const difficultyWrap = document.getElementById('difficulty-wrap');
-    const modeDiffSel = document.getElementById('mode-difficulty');
     const applyModeUI = () => {
       const st = Junqi.main.getState();
-      difficultyWrap.style.display = (st && st.mode === 'pvp') ? 'none' : '';
+      segWrap.style.display = (st && st.mode === 'pvp') ? 'none' : '';
     };
     const chooseMode = (m) => {
       Junqi.main.setDifficulty(modeDiffSel.value);
-      document.getElementById('difficulty').value = modeDiffSel.value;
+      syncDiffUI(modeDiffSel.value);
       Junqi.main.setMode(m);
       Junqi.main.reset();
       modeModal.classList.add('hidden');
@@ -172,7 +195,7 @@
     document.getElementById('mode-pvp').addEventListener('click', () => chooseMode('pvp'));
     document.getElementById('switch-mode').addEventListener('click', () => {
       // 打开时同步弹窗内的难度选择，便于调整后再进入
-      modeDiffSel.value = document.getElementById('difficulty').value;
+      modeDiffSel.value = currentDiff;
       modeModal.classList.remove('hidden');
       // 焦点移入弹窗，防止 Tab 穿透到弹窗后的棋盘
       document.getElementById('mode-ai').focus();
@@ -183,7 +206,12 @@
 
     // 音效开关（持久化到 localStorage）
     const sfxBtn = document.getElementById('sfx-toggle');
-    const syncSfxBtn = () => { sfxBtn.textContent = Junqi.sfx.isMuted() ? '🔇 静音' : '🔊 音效'; };
+    const syncSfxBtn = () => {
+      const muted = Junqi.sfx.isMuted();
+      sfxBtn.textContent = muted ? '🔇' : '🔊';
+      sfxBtn.title = muted ? '音效：关' : '音效：开';
+      sfxBtn.setAttribute('aria-pressed', String(!muted));
+    };
     sfxBtn.addEventListener('click', () => { Junqi.sfx.toggleMuted(); syncSfxBtn(); });
     syncSfxBtn();
 
@@ -226,6 +254,16 @@
       go.classList.add('hidden'); disarmRestart(); Junqi.main.reset();
     });
     document.getElementById('gameover-view').addEventListener('click', () => go.classList.add('hidden'));
+
+    // 记牌器手风琴：窄屏阵亡名册默认折叠（省纵向空间），宽屏恒展开
+    const panelLost = document.getElementById('panel-lost');
+    const narrowMq = window.matchMedia('(max-width: 979px)');
+    const syncPanels = () => {
+      if (narrowMq.matches) panelLost.removeAttribute('open');
+      else panelLost.setAttribute('open', '');
+    };
+    syncPanels();
+    if (narrowMq.addEventListener) narrowMq.addEventListener('change', syncPanels);
   </script>
 </body>
 </html>

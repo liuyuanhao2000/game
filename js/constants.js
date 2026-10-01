@@ -5,7 +5,7 @@
   const NS = (typeof window !== 'undefined') ? window : globalThis;
   NS.Junqi = NS.Junqi || {};
 
-  const VERSION = '1.0.9'; // 与 package.json 保持一致；界面版本号由此渲染
+  const VERSION = '1.1.0'; // 与 package.json 保持一致（tests/version.test.js 会校验）；界面版本号由此渲染
 
   const ROWS = 12;
   const COLS = 5;

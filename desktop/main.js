@@ -11,7 +11,7 @@ function createWindow() {
     minWidth: 360,
     minHeight: 640,
     title: '军旗翻翻棋',
-    backgroundColor: '#15314a',  // 与游戏底色一致，避免白闪
+    backgroundColor: '#17181c',  // 与游戏底色一致（v1.1.0 国潮墨金深墨底），避免白闪
     autoHideMenuBar: true,       // 隐藏菜单栏（Alt 仍可唤出）
     icon: path.join(__dirname, 'icon.png'),
     webPreferences: {

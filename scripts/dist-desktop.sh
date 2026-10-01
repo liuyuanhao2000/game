@@ -29,7 +29,9 @@ export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
 REGISTRY="https://registry.npmmirror.com"
 APP_NAME="军旗翻翻棋"
 APP_VERSION=$(node -p "require('./package.json').version")
-IGNORE="^/(dist|docs|tests|scripts|desktop/make-icon\.js|\.claude|\.git|plans|www|android)"
+# 白名单式 ignore：排除一切，只放行 Electron 运行所需文件
+# （根目录的 APK / 备份 / 预览目录等历史遗留曾多次被打进 asar，黑名单防不住）
+IGNORE='^/(?!index\.html$|style\.css$|package\.json$|LICENSE$|README\.md$|js(/|$)|desktop(/(?!make-icon\.js$)|$)|node_modules(/|$))'
 
 platforms=()
 build_android=0

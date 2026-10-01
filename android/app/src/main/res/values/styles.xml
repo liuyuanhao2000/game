@@ -18,5 +18,7 @@
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
+        <item name="android:statusBarColor">#17181C</item>
+        <item name="android:navigationBarColor">#17181C</item>
     </style>
 </resources>
