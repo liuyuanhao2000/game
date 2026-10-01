@@ -8,7 +8,11 @@
 #   scripts/dist-desktop.sh linux        # 只打 Linux x64
 #   scripts/dist-desktop.sh android      # 只打 Android 签名 release APK
 #   scripts/dist-desktop.sh all          # 三个都打（win + linux + android）
+#   scripts/dist-desktop.sh all "国潮墨金UI"  # 同上；APK 自动归档到根目录并带备注后缀
 #   scripts/dist-desktop.sh --dev        # 不打包，只补装本机运行用的 electron 二进制（npm start 用）
+#
+# APK 归档：带 android 构建时，产物自动复制到仓库根目录，命名为
+#   军旗翻翻棋-v<版本>_<备注>.apk（备注 = 平台关键字之外的参数，可省略）
 #
 # 说明：
 # - 依赖和 electron 二进制都走 npmmirror 镜像（直连 npmjs.org / github 经常超时）
@@ -36,6 +40,7 @@ IGNORE='^/(?!index\.html$|style\.css$|package\.json$|LICENSE$|README\.md$|js(/|$
 platforms=()
 build_android=0
 dev_only=0
+apk_note=""
 
 for arg in "$@"; do
   case "$arg" in
@@ -44,10 +49,7 @@ for arg in "$@"; do
     linux)       platforms+=(linux) ;;
     android|apk) build_android=1 ;;
     all)         platforms+=(win32 linux); build_android=1 ;;
-    *)
-      echo "未知参数: $arg（可用: win linux android all --dev）" >&2
-      exit 1
-      ;;
+    *)           apk_note="$arg" ;;   # 平台关键字之外的参数 = APK 备注后缀
   esac
 done
 
@@ -95,6 +97,16 @@ if [ "$build_android" -eq 1 ]; then
   npm run stage:web
   node_modules/.bin/cap sync android
   (cd android && ./gradlew assembleRelease)
+
+  # 归档 APK 到仓库根目录（沿用历史版本的命名习惯；cp 保留 gradle 原产物）
+  APK_SRC="android/app/build/outputs/apk/release/app-release.apk"
+  if [ -n "$apk_note" ]; then
+    APK_OUT="${APP_NAME}-v${APP_VERSION}_${apk_note}.apk"
+  else
+    APK_OUT="${APP_NAME}-v${APP_VERSION}.apk"
+  fi
+  cp -f "$APK_SRC" "$APK_OUT"
+  echo "==> APK 已归档：$APK_OUT"
 fi
 
 echo "==> 完成，产物："
@@ -105,5 +117,5 @@ for p in "${platforms[@]}"; do
   esac
 done
 if [ "$build_android" -eq 1 ]; then
-  echo "  android/app/build/outputs/apk/release/app-release.apk（直接发文件给安卓用户）"
+  echo "  ${APK_OUT}（已归档到根目录，直接发文件给安卓用户）"
 fi
