@@ -994,8 +994,17 @@
       }
       return finish(bestSoFar);
     } catch (e) {
-      if (e instanceof BudgetExceeded) return null; // 理论不可达（内层已捕获）
-      return chooseMedium(state, side); // 非预算异常的终极兜底
+      if (e instanceof BudgetExceeded) {
+        // 理论不可达（内层已捕获并返回上层最优根着）；若走到这里说明迭代循环外
+        // 还有预算检查盲区。返回 null 交由调用方兜底（main.js 会同步重算），必须留日志。
+        console.error('[ai] 意外的 BudgetExceeded（预算检查盲区）', e);
+        return null;
+      }
+      // 非预算异常的终极兜底：降级 medium。必须记日志——否则搜索代码的真实 bug
+      // （如 undo 不一致的 TypeError）被静默吞掉，线上表现为"AI 突然变笨"且无线索可查。
+      // worker 内的 console.error 会转发到宿主页面控制台（Chrome 远程调试可见）。
+      console.error('[ai] 搜索异常，降级 medium 兜底', e);
+      return chooseMedium(state, side);
     } finally {
       _deadline = 0;          // 搜索结束：解除预算闸，后续直接调 evaluate 不再受限
       _cfg = PRESETS.hard;    // 复位为 hard 语义（搜索外裸调 evaluate/quiesce 行为稳定）

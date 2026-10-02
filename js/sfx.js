@@ -13,15 +13,32 @@
   let muted = false;
   try { muted = (typeof localStorage !== 'undefined') && localStorage.getItem('junqi-sfx-muted') === '1'; } catch (e) { /* file:// 个别浏览器禁用 localStorage */ }
 
+  // resume 的防御封装：老实现可能同步抛错或返回 undefined 而非 Promise，
+  // Promise 拒绝若不接住会产生 unhandledrejection 噪音（自动播放策略下 resume 被拒是常态）
+  function safeResume() {
+    try {
+      const p = ctx.resume();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (e) { /* 无 resume 或同步抛错：忽略，下次手势再试 */ }
+  }
+
   function ensureCtx() {
     if (ctx) {
-      if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
+      if (ctx.state === 'suspended' && ctx.resume) safeResume();
       return ctx;
     }
     const AC = (typeof AudioContext !== 'undefined') ? AudioContext
       : (typeof webkitAudioContext !== 'undefined') ? webkitAudioContext : null;
     if (!AC) return null;
     ctx = new AC();
+    // iOS 来电/闹钟/Siri 打断后 ctx 会进入 'interrupted' 态，系统恢复时自动补一次 resume。
+    // 只处理 'interrupted'：'suspended' 的恢复属于手势路径（play/unlock 内的 safeResume），
+    // 在这里重试非手势 resume 是无效空转。
+    if (typeof ctx.addEventListener === 'function') {
+      ctx.addEventListener('statechange', () => {
+        if (ctx && ctx.state === 'interrupted' && ctx.resume) safeResume();
+      });
+    }
     master = ctx.createGain();
     master.gain.value = 0.5;
     master.connect(ctx.destination);
@@ -190,13 +207,36 @@
     return 'move';
   }
 
+  // ---- 手势解锁（P0-6）----
+  // 预创建/恢复 AudioContext，须在用户手势栈内调用（如静音按钮的 click 处理器）。
+  // 场景：用户全程静音游玩——play() 的 muted 早退使 ctx 从未创建；中途取消静音后，
+  // 下一个音效很可能是 AI 落子音（450ms setTimeout + worker 回调触发，非手势栈），
+  // 届时才 new AudioContext() 在自动播放策略下创建即 suspended、非手势 resume 不保证
+  // 生效 → 取消静音后长时间无声。静音按钮的 click 恰是恢复出声前最后一个必然手势，
+  // 顺手在此完成解锁。
+  function unlock() {
+    if (!ensureCtx()) return false;
+    if (ctx.state === 'suspended' && ctx.resume) safeResume();
+    // 兼容老 WebKit 的自动播放白名单：播一个零长静音 buffer（无声，纯触发解锁）
+    try {
+      const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch (e) { /* 桩环境/异常实现忽略：ensureCtx+resume 已完成主要解锁 */ }
+    return true;
+  }
+
   // ---- 静音（localStorage 持久化）----
   function setMuted(m) {
     muted = !!m;
     try { localStorage.setItem('junqi-sfx-muted', muted ? '1' : '0'); } catch (e) { /* 忽略 */ }
+    // 取消静音 = 恢复出声前的手势时机，立即预热解锁（见 unlock 注释）
+    if (!muted) unlock();
   }
   function isMuted() { return muted; }
   function toggleMuted() { setMuted(!muted); return muted; }
 
-  NS.Junqi.sfx = { play, soundFor, setMuted, isMuted, toggleMuted };
+  NS.Junqi.sfx = { play, soundFor, setMuted, isMuted, toggleMuted, unlock };
 })();

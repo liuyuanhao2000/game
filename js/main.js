@@ -37,6 +37,16 @@
     }
   }
 
+  // 统一销毁 worker：terminate 线程 + 清看门狗。watchdog / onerror / reset 三处必须走这里：
+  // 仅置 aiWorker=null 不会停止旧线程——它会继续满负荷搜完预算（移动端耗电发热），
+  // 下次 ensureWorker 再建新实例还会双 worker 并存抢 CPU。terminate 前已派发的迟到结果
+  // 由调用方 thinkId++ 作废（onWorkerResult 按 id 丢弃），双保险防污染已同步补走的局面。
+  // 重建成本极低（importScripts 几个小文件），下次 runAI 时 ensureWorker 惰性重建。
+  function killWorker() {
+    if (thinkWatchdog) { clearTimeout(thinkWatchdog); thinkWatchdog = 0; }
+    if (aiWorker) { aiWorker.terminate(); aiWorker = null; }
+  }
+
   function start() {
     state = STATE.createInitialState({ mode });
     state.onChange = () => UI.render(state);
@@ -61,7 +71,7 @@
   function reset() {
     if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; }
     thinkId++; // 使 worker 中悬挂的思考结果作废（回来时按 id 检查丢弃）
-    if (thinkWatchdog) { clearTimeout(thinkWatchdog); thinkWatchdog = 0; }
+    killWorker(); // 终止仍在思考的旧线程：重开新局后不应让它跑满预算白烧 CPU
     start();
   }
 
@@ -198,7 +208,11 @@
       aiWorker.postMessage({ type: 'think', id, state: snapshot(state), difficulty, side: state.turn });
       if (thinkWatchdog) clearTimeout(thinkWatchdog);
       thinkWatchdog = setTimeout(() => {
-        aiWorker = null; // 看门狗触发：worker 静默死亡 → 弃用并同步补这一步
+        // 看门狗触发：worker 静默死亡或过慢 → 先作废本轮请求号（若它只是慢、
+        // 稍后仍回传结果，按 id 检查丢弃，防止污染已同步补走的局面：重播音效/二次 toast），
+        // 再 terminate 防僵尸线程，最后同步补走这一步。
+        thinkId++;
+        killWorker();
         runAISync();
       }, 15000);
       return;
@@ -211,9 +225,18 @@
     if (!state.sidesAssigned) return;
     const action = AI.chooseMove(state, difficulty, state.turn);
     // 理论不可达：若 AI 方无合法走法，上一步 applyMove 的 checkWinner 已判负，
-    // scheduleAI 在 winner 非空时不会调度；此处仅防御性返回。
-    if (!action) return;
-    STATE.applyMove(state, action);
+    // scheduleAI 在 winner 非空时不会调度；防御性返回必须留日志，不得静默。
+    if (!action) {
+      console.error('[main] runAISync: AI 返回空动作（理论不可达），本步跳过');
+      return;
+    }
+    if (!STATE.applyMove(state, action)) {
+      // 理论不可达：chooseMove 的动作出自同一 state 的 enumerateActions，必然合法。
+      // 走到这里说明引擎有 bug——大声记日志，且不播音效：
+      // 被拒的走子没有发生，不能按"已走子"重播上一步音效伪装成功。
+      console.error('[main] runAISync: applyMove 拒绝了 AI 动作', action);
+      return;
+    }
     // 渲染由 state.onChange 触发（恰好一次），避免二次渲染打断动画
     soundAfterApply();
   }
@@ -224,15 +247,30 @@
     if (msg.id !== thinkId) return; // 过期结果（已重开新局）→ 丢弃
     if (thinkWatchdog) { clearTimeout(thinkWatchdog); thinkWatchdog = 0; }
     if (state.winner || !state.sidesAssigned) return; // 局面已变（防御）
-    if (!msg.action) return;
-    STATE.applyMove(state, msg.action); // notify → 恰好渲染一次
-    soundAfterApply();
+    if (!msg.action) {
+      // worker 回传空动作（ai.js 的"理论不可达"路径）：不能静默 return——
+      // 那会让 AI 永久停摆在自己回合且无任何提示。按本文件既有恢复惯例
+      // （watchdog/onerror 同款）同步重算兜底；若同步路径也为空，runAISync 内有防御日志。
+      console.error('[main] worker 回传空动作，同步重算兜底');
+      runAISync();
+      return;
+    }
+    if (!STATE.applyMove(state, msg.action)) {
+      // worker 基于快照计算，被拒说明动作与当前局面脱节（理论不可达）：
+      // 不播音效（走子未发生），记日志，并按本文件既有恢复惯例（watchdog/onerror
+      // 同款）用实时局面同步重算补走这一步，避免 AI 回合无人走子而停摆。
+      console.error('[main] worker result: applyMove 拒绝了 AI 动作', msg.action);
+      runAISync();
+      return;
+    }
+    soundAfterApply(); // notify → 恰好渲染一次
   }
 
   function onWorkerError() {
-    // worker 出错：弃用并立即同步补走这一步，后续走同步路径，避免 AI 停摆
-    if (thinkWatchdog) { clearTimeout(thinkWatchdog); thinkWatchdog = 0; }
-    aiWorker = null;
+    // worker 出错：作废请求号（防已入队的结果消息在补走后到达造成污染）并 terminate
+    // 防僵尸线程，随后立即同步补走这一步，下次思考时 ensureWorker 重建，避免 AI 停摆
+    thinkId++;
+    killWorker();
     runAISync();
   }
 

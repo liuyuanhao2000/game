@@ -60,6 +60,7 @@
   let selected = null, legalTargets = {};
   let renderedLastMove = null;   // 已为之播过动画的 lastMove（引用比较，避免重复触发）
   let gameoverShown = false;     // 当前终局是否已弹出结算浮层
+  let liveState = null;          // 最近一次 render() 的 state 对象（引用比较：供延迟回调识别"是否仍是当前局"）
   let clickCells = [];           // 每格的点击/键盘聚焦 rect（按格索引存放，供 aria-label 更新与方向键导航）
   const reduceMotion = (typeof matchMedia === 'function') && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -231,6 +232,7 @@
 
   function render(state) {
     if (!svgEl) return;
+    liveState = state; // 记录当前活跃对局对象，供延迟回调（终局 700ms 弹层）比对身份
     const lmNow = state.lastMove;
     const isNewLm = lmNow !== renderedLastMove; // 这一步是否刚发生（用于入场动画）
 
@@ -507,7 +509,10 @@
           }
           if (tEl) tEl.textContent = gameoverTitle(state);
           setTimeout(() => {
-            if (state.winner) { go.classList.remove('hidden'); goStartFx(kind); }
+            // 身份比对：700ms 内用户可能已重开新局——reset/start 会重建 state 对象，
+            // 旧对象的 winner 恒为真值，仅检查 winner 会把旧局结算浮层误弹到新棋盘上。
+            // （与 main.js 音效定时器比对 state.winner !== w 属同类防御）
+            if (state === liveState && state.winner) { go.classList.remove('hidden'); goStartFx(kind); }
           }, 700);
         }
       } else {
