@@ -6,3 +6,11 @@ dist/
 www/
 generated-images/
 .workbuddy/
+
+# 签名密钥防线（SEC-1）：keystore/密码文件绝不入库——
+# 配合 update_normal.sh 的 git add -A，误拷进仓库目录会被直接推上公开远端。
+# 注：有意保留的 APK 不加 *.apk 忽略规则（所有者决策，见 docs/优化建议.md REPO-1）；
+# android/keystore.properties.example 是占位模板，文件名不匹配下列规则，不受影响。
+*.jks
+*.keystore
+keystore.properties
