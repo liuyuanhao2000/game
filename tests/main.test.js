@@ -219,3 +219,12 @@ test('main: 同步路径 AI 动作被拒 → 不播任何音效、记录日志�
 
   MAIN.reset();
 });
+
+test('main: setVariant 传入 createInitialState — 玩法标记随 reset/start 进入 state', () => {
+  MAIN.setVariant('rankUp');
+  MAIN.reset();
+  assert.strictEqual(MAIN.getState().variant, 'rankUp');
+  MAIN.setVariant('classic');
+  MAIN.reset();
+  assert.strictEqual(MAIN.getState().variant, 'classic', '还原经典，避免污染后续用例');
+});

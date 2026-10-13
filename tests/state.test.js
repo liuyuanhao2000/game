@@ -441,3 +441,167 @@ test('state: prevMove — move 记录行动者，flip 清空行动者（非被�
   S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) });
   assert.deepStrictEqual(st.prevMove.red, { from: idx(1,0), to: idx(1,1) }, 'move 记录行动者上一步');
 });
+
+// ============ v1.2.0 娱乐·军衔升级玩法（variant='rankUp'）============
+function makeFunState(b, mode = 'ai') {
+  const st = makeState(b, mode);
+  st.variant = 'rankUp';
+  return st;
+}
+function ready(st, turn = 'red') {
+  st.sidesAssigned = true; st.turn = turn; st.controllers = { red: 'human', blue: 'ai' };
+  return st;
+}
+function supEng(side, captures) {
+  return { type: 'engineer', rank: 1 + captures, side, captures };
+}
+
+test('state: createInitialState 默认经典玩法；opts.variant 指定娱乐玩法且随 JSON 快照传递', () => {
+  const st1 = S.createInitialState();
+  assert.strictEqual(st1.variant, 'classic');
+  const st2 = S.createInitialState({ mode: 'pvp', variant: 'rankUp' });
+  assert.strictEqual(st2.variant, 'rankUp');
+  assert.strictEqual(st2.mode, 'pvp');
+  assert.strictEqual(JSON.parse(JSON.stringify(st2)).variant, 'rankUp', 'variant 是纯数据字段，worker 快照必须保留');
+});
+
+test('state(rankUp): 攻击方吃子存活 → 军衔升一级；type 不变；原对象不被修改（克隆替换）', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'platoon', 'red');
+  place(b, idx(1,1), 'engineer', 'blue');
+  const st = ready(makeFunState(b));
+  const before = st.board[idx(1,0)].piece;
+  assert.ok(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }));
+  const after = st.board[idx(1,1)].piece;
+  assert.strictEqual(after.rank, 3, '排长(2) 吃子 → 升为战力3（连长）');
+  assert.strictEqual(after.type, 'platoon', 'type 不变：记牌器/AI 剩余分布口径不受影响');
+  assert.notStrictEqual(after, before, '升级以克隆替换落地，不得原地改（AI make/unmake 契约）');
+  assert.strictEqual(before.rank, 2, '原对象 rank 不得被修改（否则 undoAction 泄漏升级）');
+  assert.deepStrictEqual(st.lastMove.battle.promotion,
+    { side: 'red', type: 'platoon', fromRank: 2, rank: 3, captures: 0 });
+});
+
+test('state(rankUp): 防守方反杀来袭子 → 防守方同样升级（攻防都触发）', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'division', 'red');
+  place(b, idx(1,1), 'general', 'blue');
+  const st = ready(makeFunState(b));
+  assert.ok(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }));
+  const surv = st.board[idx(1,1)].piece;
+  assert.strictEqual(surv.type, 'general');
+  assert.strictEqual(surv.side, 'blue');
+  assert.strictEqual(surv.rank, 9, '军长(8) 反杀师长 → 升到司令战力');
+  assert.strictEqual(st.lastMove.battle.promotion.side, 'blue');
+  assert.strictEqual(st.lastMove.battle.promotion.rank, 9);
+  assert.strictEqual(st.captured['division:red'], 1);
+});
+
+test('state(rankUp): 司令封顶 — 再吃子保持司令，无 promotion 记录', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'commander', 'red');
+  place(b, idx(1,1), 'division', 'blue');
+  const st = ready(makeFunState(b));
+  assert.ok(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }));
+  assert.strictEqual(st.board[idx(1,1)].piece.rank, 9);
+  assert.strictEqual(st.lastMove.battle.promotion, null);
+});
+
+test('state(rankUp): 同归于尽 → 双方都不升级', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'division', 'red');
+  place(b, idx(1,1), 'division', 'blue');
+  const st = ready(makeFunState(b));
+  assert.ok(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }));
+  assert.strictEqual(st.board[idx(1,1)].piece, null);
+  assert.strictEqual(st.lastMove.battle.promotion, null);
+  assert.strictEqual(st.captured['division:red'], 1);
+  assert.strictEqual(st.captured['division:blue'], 1);
+});
+
+test('state(rankUp): 非工兵撞雷身亡 → 地雷为特殊子不升级、不记雷损', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'platoon', 'red');
+  place(b, idx(1,1), 'mine', 'blue');
+  const st = ready(makeFunState(b));
+  assert.ok(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }));
+  const m = st.board[idx(1,1)].piece;
+  assert.strictEqual(m.type, 'mine');
+  assert.strictEqual(m.rank, 0);
+  assert.strictEqual(m.captures, undefined);
+  assert.strictEqual(st.lastMove.battle.promotion, null);
+  assert.strictEqual(st.minesLost.blue, 0);
+  assert.strictEqual(st.captured['platoon:red'], 1);
+});
+
+test('state(rankUp): 工兵排雷 → 升级超级工兵（captures=1、战力2），排雷计为吃子', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'engineer', 'red');
+  place(b, idx(1,1), 'mine', 'blue');
+  const st = ready(makeFunState(b));
+  assert.ok(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }));
+  const e = st.board[idx(1,1)].piece;
+  assert.strictEqual(e.type, 'engineer', 'type 保持工兵：排雷/铁路转弯能力天然保留');
+  assert.strictEqual(e.captures, 1);
+  assert.strictEqual(e.rank, 2, '战力 = 1 + 吃子数');
+  assert.strictEqual(st.minesLost.blue, 1);
+  assert.deepStrictEqual(st.lastMove.battle.promotion,
+    { side: 'red', type: 'engineer', fromRank: 1, rank: 2, captures: 1 });
+});
+
+test('state(rankUp): 超级工兵继续排雷 → 战力累加，移动方式不变（仍走工兵铁路 BFS）', () => {
+  const b = emptyBoard();
+  b[idx(1,0)] = { piece: supEng('red', 1), revealed: true }; // 已吃 1 子（战力2）
+  place(b, idx(1,1), 'mine', 'blue');
+  const st = ready(makeFunState(b));
+  // 移动合法性走 legalMoves：工兵在铁路上可转弯（type 判定，与 rank 无关）
+  assert.ok(R.legalMoves(st, idx(1,0)).some((m) => m.to === idx(1,1)));
+  assert.ok(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }));
+  const e = st.board[idx(1,1)].piece;
+  assert.strictEqual(e.captures, 2);
+  assert.strictEqual(e.rank, 3);
+  assert.strictEqual(st.minesLost.blue, 1);
+});
+
+test('state(rankUp): 超级工兵战力数值同场比较 — 战力3吃排长(2)再升，与连长(3)同归', () => {
+  const b = emptyBoard();
+  b[idx(1,0)] = { piece: supEng('red', 2), revealed: true }; // 战力 3
+  place(b, idx(1,1), 'platoon', 'blue');
+  const st = ready(makeFunState(b));
+  assert.ok(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }));
+  assert.strictEqual(st.board[idx(1,1)].piece.rank, 4);
+  assert.strictEqual(st.board[idx(1,1)].piece.captures, 3);
+
+  const b2 = emptyBoard();
+  b2[idx(1,0)] = { piece: supEng('red', 2), revealed: true }; // 战力 3
+  place(b2, idx(1,1), 'company', 'blue');                    // 连长 3
+  const st2 = ready(makeFunState(b2));
+  assert.ok(S.applyMove(st2, { kind:'move', from: idx(1,0), to: idx(1,1) }));
+  assert.strictEqual(st2.board[idx(1,1)].piece, null, '同战力同归于尽');
+  assert.strictEqual(st2.lastMove.battle.promotion, null);
+});
+
+test('state(rankUp): 吃军旗同样触发升级（同时终局）', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'division', 'red');
+  place(b, idx(1,1), 'flag', 'blue');
+  const st = ready(makeFunState(b));
+  st.minesLost.blue = C.MINES_PER_SIDE; // 雷已拔满，军旗可吃
+  assert.ok(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }));
+  assert.strictEqual(st.winner, 'red');
+  assert.strictEqual(st.board[idx(1,1)].piece.rank, 8);
+  assert.strictEqual(st.lastMove.battle.promotion.rank, 8);
+});
+
+test('state(classic): 同款战斗不触发任何升级 — 经典模式回归护栏', () => {
+  const b = emptyBoard();
+  place(b, idx(1,0), 'platoon', 'red');
+  place(b, idx(1,1), 'engineer', 'blue');
+  const st = ready(makeState(b)); // 无 variant → classic
+  const before = st.board[idx(1,0)].piece;
+  assert.ok(S.applyMove(st, { kind:'move', from: idx(1,0), to: idx(1,1) }));
+  const after = st.board[idx(1,1)].piece;
+  assert.strictEqual(after, before, '经典玩法：存活者就是原对象，无克隆');
+  assert.strictEqual(after.rank, 2);
+  assert.strictEqual(after.captures, undefined);
+  assert.strictEqual(st.lastMove.battle.promotion, null);
+});

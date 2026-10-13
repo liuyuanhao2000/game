@@ -13,6 +13,7 @@
 
   let state = null;
   let mode = 'ai';        // 'ai'=人机 | 'pvp'=双人同屏；模式选择弹窗设定
+  let variant = C.VARIANTS.CLASSIC; // 玩法：'classic'=经典 | 'rankUp'=娱乐·军衔升级；弹窗设定
   let difficulty = C.DIFFICULTY.MASTER; // 默认大师档（下拉框默认项与此一致）
   let aiTimer = null;
   // AI 思考 Worker（后台线程，思考时不冻屏）；不可用时（file:// 等）自动同步降级
@@ -48,7 +49,7 @@
   }
 
   function start() {
-    state = STATE.createInitialState({ mode });
+    state = STATE.createInitialState({ mode, variant });
     state.onChange = () => UI.render(state);
     const vEl = document.getElementById('version');
     if (vEl) vEl.textContent = 'v' + C.VERSION; // 版本号唯一来源：constants.VERSION
@@ -67,6 +68,8 @@
   function setDifficulty(d) { difficulty = d; }
 
   function setMode(m) { mode = m; }
+
+  function setVariant(v) { variant = v; }
 
   function reset() {
     if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; }
@@ -178,6 +181,13 @@
       const fs = state.board[lm.battle.revealedFlags[0]].piece.side;
       UI.toast((fs === 'red' ? '红方' : '蓝方') + '司令阵亡，军旗显形！');
     }
+    // 娱乐·军衔升级：本步有存活子升级 → 播报 + 延迟叠一记升级音（让吃子/拔雷动作音先落）
+    const prm = lm && lm.battle && lm.battle.promotion;
+    if (prm) {
+      UI.toast(C.promotionText(prm));
+      const st = state;
+      setTimeout(() => { if (state === st) SFX.play('promote'); }, 220); // 期间重开新局则不播
+    }
     const name = SFX.soundFor(state.lastMove);
     if (name) SFX.play(name);
     if (state.winner) {
@@ -276,7 +286,7 @@
 
   // 暴露调试接口
   NS.Junqi.main = {
-    start, setDifficulty, setMode, reset,
+    start, setDifficulty, setMode, setVariant, reset,
     getState: () => state,
     legalMoves: (i) => state ? R.legalMoves(state, i) : [],
   };

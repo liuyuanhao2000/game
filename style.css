@@ -99,6 +99,20 @@ body {
   border-radius: 4px;
   opacity: 0.85;
 }
+/* 玩法金标（娱乐模式激活时显示在版本号旁） */
+.variant-badge {
+  margin: 0 2px 2px 6px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #2a2010;
+  background: linear-gradient(180deg, #e2b25e, var(--gold));
+  border-radius: 4px;
+  opacity: 0.92;
+  white-space: nowrap;
+}
+.variant-badge.hidden, .fun-rule.hidden { display: none; }
 .top-actions { display: flex; gap: 8px; }
 
 /* 通用按钮（触控目标 ≥ 40px） */
@@ -329,6 +343,8 @@ body {
 /* SVG 内文字 */
 .river-text { fill: var(--river-text); font-size: 0.42px; font-weight: 700; letter-spacing: 0.06px; }
 .piece-text { font-size: 0.34px; font-weight: 700; }
+.piece-text-2l { font-size: 0.26px; } /* 四字名（超级工兵）双行排版 */
+.power-badge-text { font-size: 0.17px; font-weight: 800; fill: #241c0e; } /* 超级工兵战力角标 */
 .side-text-red { fill: #fff5f2; }
 .side-text-blue { fill: #f2f7ff; }
 .back-text { fill: #f0d9a8; }
@@ -385,6 +401,12 @@ body {
 
 /* 模式选择弹窗 */
 .mode-content { text-align: center; }
+.variant-row { display: flex; margin: 12px 0 2px; }
+.variant-desc {
+  font-size: 12px; color: var(--muted); line-height: 1.6;
+  margin: 6px auto 0; max-width: 34em; text-align: left; min-height: 2.6em;
+}
+.fun-rule { color: var(--gold-soft); }
 .mode-buttons { display: flex; gap: 12px; margin: 14px 0 6px; flex-wrap: wrap; }
 .mode-btn {
   flex: 1 1 150px; display: flex; flex-direction: column; gap: 6px; align-items: center;

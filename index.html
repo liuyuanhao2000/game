@@ -13,7 +13,8 @@
       <div class="topbar-row topbar-row-main">
         <div class="brand">
           <h1>军旗翻翻棋</h1>
-          <span class="version" id="version" title="版本号">v1.1.1</span>
+          <span class="version" id="version" title="版本号">v1.2.0</span>
+          <span class="variant-badge hidden" id="variant-badge" title="当前玩法：娱乐·军衔升级（吃子升军衔）">娱乐·军衔升级</span>
         </div>
         <div class="top-actions">
           <button id="sfx-toggle" class="icon-btn" title="音效开关" aria-label="音效开关" aria-pressed="true">🔊</button>
@@ -89,6 +90,13 @@
     <div id="mode-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="mode-title">
       <div class="modal-content mode-content">
         <h2 id="mode-title">选择对战模式</h2>
+        <div class="variant-row">
+          <div class="seg seg-variant" id="variant-seg" role="group" aria-label="玩法选择">
+            <button type="button" data-variant="classic" class="active" aria-pressed="true">经典模式</button>
+            <button type="button" data-variant="rankUp" aria-pressed="false">娱乐·军衔升级</button>
+          </div>
+        </div>
+        <p class="variant-desc" id="variant-desc"></p>
         <div class="mode-buttons">
           <button id="mode-ai" class="mode-btn">
             <span class="mode-name">🤖 人机对战</span>
@@ -122,6 +130,7 @@
           <li>铁路上可直线滑行多步（工兵可转弯），但<b>离轨须独立下一步</b>，不能同步滑行后离轨。</li>
           <li>楚河仅在左(C1)/中(C3)/右(C5)三处可过。</li>
           <li><b>需先拔掉对方全部 3 颗地雷，才能攻击其军旗</b>；吃旗或炸旗即胜。令对方无路可走也胜（优先于和棋）；连续 40 回合无吃翻判和。</li>
+          <li id="rules-fun" class="fun-rule hidden"><b>娱乐·军衔升级玩法</b>：战斗中<b>存活方自动升一级军衔</b>（攻防都算；同归于尽不升；司令封顶）。<b>工兵</b>吃子（含排雷）后成为<b>超级工兵</b>：移动方式不变、保留排雷能力，此后每吃一子<b>战力 +1</b>（角标数字），按战力与军衔同场比大小（排长=2 … 司令=9，超过 9 可吃司令）。</li>
         </ul>
         <button id="rules-close">关闭</button>
       </div>
@@ -174,16 +183,48 @@
       Junqi.main.setDifficulty(b.dataset.diff);
     });
 
+    // ---- 玩法选择（经典 / 娱乐·军衔升级）：弹窗内 seg，选完模式一并生效 ----
+    const variantSeg = document.getElementById('variant-seg');
+    const variantDesc = document.getElementById('variant-desc');
+    const VARIANT_DESC = {
+      classic: '经典规则：大吃小、同级同归于尽。',
+      rankUp: '娱乐玩法：战斗后存活方自动升一级军衔（司令封顶）；工兵吃子（含排雷）后成为超级工兵，此后每吃一子战力 +1，移动不变、保留排雷能力。',
+    };
+    let currentVariant = 'classic';
+    const syncVariantUI = (v) => {
+      currentVariant = v;
+      variantSeg.querySelectorAll('button[data-variant]').forEach((b) => {
+        const on = b.dataset.variant === v;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+      variantDesc.textContent = VARIANT_DESC[v] || VARIANT_DESC.classic;
+    };
+    syncVariantUI(currentVariant); // 启动时统一初始状态
+    variantSeg.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-variant]');
+      if (!b) return;
+      syncVariantUI(b.dataset.variant);
+    });
+
     // 模式选择：开局弹窗必选；pvp 模式隐藏顶栏难度
     const modeModal = document.getElementById('mode-modal');
+    const variantBadge = document.getElementById('variant-badge');
+    const rulesFun = document.getElementById('rules-fun');
     const applyModeUI = () => {
       const st = Junqi.main.getState();
       segWrap.style.display = (st && st.mode === 'pvp') ? 'none' : '';
+      // 娱乐玩法：顶栏金标 + 规则弹窗附条；并把弹窗 seg 同步到当前实际玩法
+      const isFun = !!(st && st.variant === 'rankUp');
+      variantBadge.classList.toggle('hidden', !isFun);
+      rulesFun.classList.toggle('hidden', !isFun);
+      if (st && st.variant && st.variant !== currentVariant) syncVariantUI(st.variant);
     };
     const chooseMode = (m) => {
       Junqi.main.setDifficulty(modeDiffSel.value);
       syncDiffUI(modeDiffSel.value);
       Junqi.main.setMode(m);
+      Junqi.main.setVariant(currentVariant);
       Junqi.main.reset();
       modeModal.classList.add('hidden');
       applyModeUI();
@@ -194,8 +235,10 @@
     document.getElementById('mode-ai').addEventListener('click', () => chooseMode('ai'));
     document.getElementById('mode-pvp').addEventListener('click', () => chooseMode('pvp'));
     document.getElementById('switch-mode').addEventListener('click', () => {
-      // 打开时同步弹窗内的难度选择，便于调整后再进入
+      // 打开时同步弹窗内的难度/玩法选择，便于调整后再进入
       modeDiffSel.value = currentDiff;
+      const st = Junqi.main.getState();
+      syncVariantUI((st && st.variant) || currentVariant);
       modeModal.classList.remove('hidden');
       // 焦点移入弹窗，防止 Tab 穿透到弹窗后的棋盘
       document.getElementById('mode-ai').focus();

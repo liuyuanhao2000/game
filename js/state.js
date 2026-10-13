@@ -30,6 +30,7 @@
 
   function createInitialState(opts) {
     const mode = (opts && opts.mode) || 'ai'; // 'ai'=人机 | 'pvp'=双人同屏
+    const variant = (opts && opts.variant) || C.VARIANTS.CLASSIC; // 玩法：'classic'=经典 | 'rankUp'=娱乐·军衔升级
     const board = new Array(C.CELL_COUNT);
     for (let i = 0; i < C.CELL_COUNT; i++) board[i] = { piece: null, revealed: false };
     // 随机摆放 50 子；行营格不放棋子（10 个行营格保持空）
@@ -44,6 +45,7 @@
       board,
       rows: C.ROWS, cols: C.COLS,
       mode,                      // 对局模式，供 UI/调度分支
+      variant,                   // 玩法（经典/娱乐·军衔升级），供 applyBattle/AI/UI 分支；随 JSON 快照进 worker
       turn: null,                // 首次翻棋前为 null；任意可行动方先行翻棋
       controllers: { red: null, blue: null }, // 每方操作者：'human'|'ai'，首次翻棋确定
       sidesAssigned: false,
@@ -64,7 +66,8 @@
   function bump(map, k) { map[k] = (map[k] || 0) + 1; }
 
   // 结算一次交战并落盘（state 与 AI 克隆通用的共享逻辑）。
-  // 返回 { flagCaptured, outcome, defender }。
+  // 返回 { flagCaptured, outcome, defender, revealedFlags, promotion }。
+  // promotion（仅娱乐·军衔升级玩法）：{ side, type, fromRank, rank, captures } | null。
   // 前置：from 为已翻可动子、to 为已翻敌子；合法性/轮次由调用方保证。
   function applyBattle(state, from, to) {
     const p = state.board[from].piece;
@@ -106,7 +109,28 @@
         }
       }
     }
-    return { flagCaptured: res.flagCaptured, outcome, defender, revealedFlags };
+    // ---- 娱乐·军衔升级玩法：战斗后存活方（非特殊子）自动升级 ----
+    // 攻防都触发：res.to.piece 即存活方（攻方反杀或守方吃掉来袭子）；同归于尽（to=null）不升。
+    // 必须放在上面所有 `res.to.piece === p/defender` 引用判定之后，且以**克隆替换**落地：
+    // AI make/unmake 依赖"applyBattle 是替换式写法"（undoAction 回填原 cell 对象），
+    // 原地改 rank 会让升级泄漏到搜索的其他分支（ai.js 快照一致性契约）。
+    let promotion = null;
+    const surv = res.to && res.to.piece;
+    if (state.variant === C.VARIANTS.RANK_UP && surv && !C.PIECES[surv.type].special) {
+      let np = null;
+      if (surv.type === 'engineer') {
+        // 工兵 → 超级工兵：每吃一子（含排雷）战力 +1；type 不变（保留排雷/铁路转弯与记牌口径）
+        const captures = (surv.captures || 0) + 1;
+        np = Object.assign({}, surv, { captures, rank: 1 + captures });
+      } else if (surv.rank < C.RANK_MAX) {
+        np = Object.assign({}, surv, { rank: surv.rank + 1 }); // 升一级；司令封顶不升
+      }
+      if (np) {
+        state.board[to].piece = np; // board[to] 已在上方以 res.to 落盘，这里只替换棋子对象
+        promotion = { side: np.side, type: np.type, fromRank: surv.rank, rank: np.rank, captures: np.captures || 0 };
+      }
+    }
+    return { flagCaptured: res.flagCaptured, outcome, defender, revealedFlags, promotion };
   }
 
   // 应用一个动作。返回 true 表示成功应用（即使触发胜负也算成功）。
@@ -175,9 +199,14 @@
         const info = applyBattle(state, from, to);
         if (info.flagCaptured) state.winner = p.side;
         state.staleCount = 0; // 吃子重置
+        // rank/captures 记录的是交战前（升级前）的数值：升级结果单独放 battle.promotion，
+        // 供 UI 播报"排长 升级为 连长"/"超级工兵 战力 +1"。经典玩法下 promotion 恒为 null。
         state.lastMove = { kind: 'move', from, to, side: p.side, type: p.type,
-          battle: { side: info.defender.side, type: info.defender.type, outcome: info.outcome,
-                    revealedFlags: info.revealedFlags } }; // 司令阵亡亮旗：本次自动翻开的军旗格
+          rank: p.rank, captures: p.captures || 0,
+          battle: { side: info.defender.side, type: info.defender.type,
+                    rank: info.defender.rank, captures: info.defender.captures || 0,
+                    outcome: info.outcome, revealedFlags: info.revealedFlags,
+                    promotion: info.promotion || null } }; // 司令阵亡亮旗：本次自动翻开的军旗格
       } else {
         // 走到空格
         state.board[to] = { piece: p, revealed: true };

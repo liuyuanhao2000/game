@@ -40,6 +40,20 @@
   // 棋子价值
   function valueOf(type) { return C.PIECE_VALUE[type] || 0; }
 
+  // 棋子价值（升级感知，娱乐·军衔升级玩法用）：
+  // 未升级子（rank === 基础 rank）与 valueOf(type) 逐位一致 → 经典模式行为零变化；
+  // 升级子按当前 rank 走军衔阶梯估值。超级工兵另加挖雷溢价（工兵22 − 排长12 ≈ 10），
+  // rank>9（吃过 8 子以上，可与司令同归乃至吃司令）在司令价上继续抬。
+  function valueOfPiece(piece) {
+    if (!piece) return 0;
+    const base = C.PIECES[piece.type];
+    if (!base || !piece.rank || piece.rank === base.rank) return valueOf(piece.type);
+    let v = C.RANK_VALUE[Math.min(piece.rank, C.RANK_MAX)] || valueOf(piece.type);
+    if (piece.rank > C.RANK_MAX) v += (piece.rank - C.RANK_MAX) * 10;
+    if (piece.type === 'engineer') v += 10; // 保留挖雷+铁路转弯能力
+    return v;
+  }
+
   // ---- 位置项静态查找表（模块加载时算一次；evaluate 热路径只做下标/成员查询）----
   // 注意：翻翻棋开局 50 子全盘随机布子，没有"己方半场"，军旗位置未知——
   // 因此位置项均为方向无关形式：行营=免疫+八向机动枢纽，穿河点=过河咽喉，价值对双方对称。
@@ -99,7 +113,7 @@
       // 位置偏好：翻棋格邻接己方大子 → 减分（翻出敌司令/炸弹贴脸大子是最坏情形）；铁路/穿河点 → 加分
       for (const n of B.orthNeighbors(action.index)) {
         const c = state.board[n];
-        if (c.piece && c.revealed && c.piece.side === side && valueOf(c.piece.type) >= 45) {
+        if (c.piece && c.revealed && c.piece.side === side && valueOfPiece(c.piece) >= 45) {
           base -= 2.5;
           break;
         }
@@ -117,19 +131,21 @@
       const d = tcell.piece;
       const res = R.resolveBattle(p, d);
       if (res.flagCaptured) return 100000; // 吃旗直接胜
-      if (res.to && res.to.piece && res.to.piece.type === p.type) {
+      // 存活判定用对象引用而非 type 比较：娱乐玩法下同 type 可能 rank 不同（升级排长 vs 排长），
+      // type 相等不代表攻击者存活。经典玩法下同 type 必同 rank（同归），两种判定等价。
+      if (res.to && res.to.piece === p) {
         // 攻击者存活
-        s += valueOf(d.type);
+        s += valueOfPiece(d);
       } else if (res.to === null) {
         // 同归（或炸弹）
-        s += valueOf(d.type) - valueOf(p.type);
+        s += valueOfPiece(d) - valueOfPiece(p);
       } else {
         // 攻击者死（撞雷等）
-        s -= valueOf(p.type) * 1.2;
+        s -= valueOfPiece(p) * 1.2;
       }
       // 炸弹节制：别拿炸弹换小子（旗与司令/军长/师长≥60 除外）
-      if (p.type === 'bomb' && d.type !== 'flag' && valueOf(d.type) < 60) {
-        s -= (60 - valueOf(d.type)) * 0.6;
+      if (p.type === 'bomb' && d.type !== 'flag' && valueOfPiece(d) < 60) {
+        s -= (60 - valueOfPiece(d)) * 0.6;
       }
     } else {
       // 空走：机动性 + 上铁路奖励 + 进入空行营（安全）小奖励
@@ -144,7 +160,7 @@
     // （D(from) 是子内常量偏移，不改变"往哪逃"——那由 D_to 与行营奖励决定）
     if (threat) s += dangerAt(threat, from);
     // 暴露己方大子（离开行营）的惩罚
-    if (B.terrainAt(from) === 'camp' && valueOf(p.type) >= 45) s -= 4;
+    if (B.terrainAt(from) === 'camp' && valueOfPiece(p) >= 45) s -= 4;
     return s + (Math.random() - 0.5) * 0.5;
   }
 
@@ -168,9 +184,9 @@
             // 对方能吃到 to；评估交换
             const res = R.resolveBattle(cell.piece, piece);
             if (res.to && res.to.piece && res.to.piece.side === enemy) {
-              danger = Math.max(danger, valueOf(piece.type)); // 我子被吃
+              danger = Math.max(danger, valueOfPiece(piece)); // 我子被吃
             } else if (res.to === null) {
-              danger = Math.max(danger, valueOf(piece.type) - valueOf(cell.piece.type));
+              danger = Math.max(danger, valueOfPiece(piece) - valueOfPiece(cell.piece));
             }
           }
         }
@@ -208,9 +224,9 @@
           if (res.to && res.to.piece && res.to.piece.side === side) {
             l = 0; // 敌攻击者死、我子存活 → 无损失
           } else if (res.to === null) {
-            l = Math.max(0, valueOf(t.piece.type) - valueOf(cell.piece.type)); // 同归：净损失
+            l = Math.max(0, valueOfPiece(t.piece) - valueOfPiece(cell.piece)); // 同归：净损失
           } else {
-            l = valueOf(t.piece.type); // 我子被吃
+            l = valueOfPiece(t.piece); // 我子被吃
           }
           if (l > loss[m.to]) { loss[m.to] = l; attacker[m.to] = cell.piece.type; }
         }
@@ -281,9 +297,11 @@
   }
 
   // 威胁扣分权重（分层；工兵在敌方尚有雷时按拔雷资产抬高）
-  function threatWeight(type, enemyMinesLeft) {
-    if (type === 'engineer' && enemyMinesLeft > 0) return 0.5;
-    const v = valueOf(type);
+  // piece 为可选第三参：娱乐玩法传入后按升级后价值分层（超级工兵战力高了不再按普通工兵折价）；
+  // 缺省时与旧签名（type, enemyMinesLeft）行为逐位一致。
+  function threatWeight(type, enemyMinesLeft, piece) {
+    const v = piece ? valueOfPiece(piece) : valueOf(type);
+    if (type === 'engineer' && enemyMinesLeft > 0 && v < 30) return 0.5;
     if (v >= 60) return 0.6;   // 司令/军长/师长
     if (v >= 30) return 0.35;  // 旅长/团长/炸弹
     return 0.15;               // 营长/连长/排长
@@ -306,7 +324,7 @@
       // 亮旗是纯信息变化（配合 rush/军旗防御项生效），材料估值必须为零。
       if (cell.piece.type === 'flag') continue;
       if (cell.revealed) {
-        score += (cell.piece.side === side ? 1 : -1) * valueOf(cell.piece.type);
+        score += (cell.piece.side === side ? 1 : -1) * valueOfPiece(cell.piece);
       } else if (totalUnrevealed > 0) {
         // 未翻子：按剩余分布算期望（归属未知，简化对半归属两方）
         // 1.0.3 实战验证过的方案：归属 ±0.5 + 0.5 不确定折扣（净 0.25 权重）——
@@ -347,10 +365,10 @@
       if (mine) {
         if (terrain !== 'camp' && C.IMMOBILE.indexOf(cell.piece.type) === -1) {
           const l = act.loss[i]; // 己方受威胁的可动子按分层权重扣分
-          if (l > 0) score -= l * threatWeight(cell.piece.type, enemyMinesLeft);
+          if (l > 0) score -= l * threatWeight(cell.piece.type, enemyMinesLeft, cell.piece);
         }
         if (terrain === 'camp') {
-          if (valueOf(cell.piece.type) >= 45) campBig++; else campSmall++;
+          if (valueOfPiece(cell.piece) >= 45) campBig++; else campSmall++;
         } else if (GATE_SET.has(i) && C.IMMOBILE.indexOf(cell.piece.type) === -1) {
           gateOwnN++;
         }
@@ -457,6 +475,7 @@
     return {
       board: state.board.map((c) => ({ piece: c.piece ? { ...c.piece } : null, revealed: c.revealed })),
       rows: state.rows, cols: state.cols,
+      variant: state.variant, // 娱乐玩法标记必须随克隆传递：applyBattle 的军衔升级依此分支
       turn: state.turn, controllers: { red: (state.controllers || {}).red || null, blue: (state.controllers || {}).blue || null },
       sidesAssigned: state.sidesAssigned, winner: state.winner, staleCount: state.staleCount,
       minesLost: { red: state.minesLost.red, blue: state.minesLost.blue },
@@ -591,10 +610,10 @@
       const res = R.resolveBattle(p, tcell.piece);
       if (res.flagCaptured) return 1000000;                                    // 夺旗置顶
       if (res.to && res.to.piece === p) {                                      // 攻击者存活（含工兵拔雷）：MVV-LVA
-        return 200000 + valueOf(tcell.piece.type) * 16 - valueOf(p.type);
+        return 200000 + valueOfPiece(tcell.piece) * 16 - valueOfPiece(p);
       }
-      if (res.to === null) return 100000 + valueOf(tcell.piece.type) - valueOf(p.type); // 同归：按交换差
-      return valueOf(tcell.piece.type) - valueOf(p.type) * 2;                  // 攻击者阵亡（撞强/撞雷）：垫底
+      if (res.to === null) return 100000 + valueOfPiece(tcell.piece) - valueOfPiece(p); // 同归：按交换差
+      return valueOfPiece(tcell.piece) - valueOfPiece(p) * 2;                  // 攻击者阵亡（撞强/撞雷）：垫底
     }
     // 安静走法：被威胁子的逃离优先
     if (threat) {
@@ -635,7 +654,7 @@
         if (res.flagCaptured) { out.push(m); continue; }
         const survives = res.to && res.to.piece === cell.piece;
         const trade = res.to === null;
-        if (!survives && !(trade && valueOf(t.piece.type) >= valueOf(cell.piece.type))) continue;
+        if (!survives && !(trade && valueOfPiece(t.piece) >= valueOfPiece(cell.piece))) continue;
         out.push(m);
       }
     }
@@ -664,7 +683,7 @@
       let best = stand;
       if (stand > alpha) alpha = stand;
       for (const m of captureActions(state)) {
-        if (stand + valueOf(state.board[m.to].piece.type) + qMargin < alpha) continue; // delta 剪枝
+        if (stand + valueOfPiece(state.board[m.to].piece) + qMargin < alpha) continue; // delta 剪枝
         let v;
         if (_cfg.makeUnmake === false) {
           const s = clone(state);
@@ -690,7 +709,7 @@
     let best = stand;
     if (stand < beta) beta = stand;
     for (const m of captureActions(state)) {
-      if (stand - valueOf(state.board[m.to].piece.type) - qMargin > beta) continue; // delta 剪枝
+      if (stand - valueOfPiece(state.board[m.to].piece) - qMargin > beta) continue; // delta 剪枝
       let v;
       if (_cfg.makeUnmake === false) {
         const s = clone(state);
@@ -931,7 +950,7 @@
     candidates.sort((a, b) => {
       const da = dangerAt(threat0, a.from), db = dangerAt(threat0, b.from);
       if (da !== db) return db - da;
-      return valueOf(state.board[b.from].piece.type) - valueOf(state.board[a.from].piece.type);
+      return valueOfPiece(state.board[b.from].piece) - valueOfPiece(state.board[a.from].piece);
     });
     for (const a of candidates) {
       const s = clone(state);
@@ -1020,7 +1039,8 @@
 
   NS.Junqi.ai = {
     chooseMove, chooseHard, enumerateActions, evaluate, remainingDistribution,
-    threatMapOf, dangerAt, threatWeight, PRESETS, quiesce, POS_W, openingCampOverride, repetitionPenalty,
+    threatMapOf, dangerAt, threatWeight, valueOfPiece, PRESETS, quiesce, POS_W,
+    openingCampOverride, repetitionPenalty,
     lastDepth: () => _lastDepth,
   };
 })();

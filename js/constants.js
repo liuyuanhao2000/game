@@ -5,7 +5,7 @@
   const NS = (typeof window !== 'undefined') ? window : globalThis;
   NS.Junqi = NS.Junqi || {};
 
-  const VERSION = '1.1.1'; // 与 package.json 保持一致（tests/version.test.js 会校验）；界面版本号由此渲染
+  const VERSION = '1.2.0'; // 与 package.json 保持一致（tests/version.test.js 会校验）；界面版本号由此渲染
 
   const ROWS = 12;
   const COLS = 5;
@@ -39,6 +39,42 @@
   // AI 难度枚举
   const DIFFICULTY = { EASY: 'easy', MEDIUM: 'medium', HARD: 'hard', MASTER: 'master' };
 
+  // ---- 玩法（娱乐模式扩展位）----
+  // variant 与 mode('ai'|'pvp') 正交：经典模式规则恒定；娱乐模式首个玩法为军衔升级。
+  // 娱乐·军衔升级：战斗后存活方（非特殊子）自动升一级军衔（司令封顶）；
+  // 工兵走特殊路径：吃子（含排雷）后成为超级工兵，战力 = 1 + 吃子数，移动方式不变、保留排雷能力。
+  const VARIANTS = { CLASSIC: 'classic', RANK_UP: 'rankUp' };
+
+  // 军衔阶梯：rank 数值 → 名称（工兵1 … 司令9）；升级/显示/AI 估值共用
+  const RANK_MAX = 9; // 普通棋子升级封顶（司令不再升）
+  const RANK_NAMES = { 1: '工兵', 2: '排长', 3: '连长', 4: '营长', 5: '团长', 6: '旅长', 7: '师长', 8: '军长', 9: '司令' };
+
+  const SIDE_NAME = { red: '红方', blue: '蓝方' };
+
+  // 棋子显示名（含升级态）：
+  // - 工兵吃过子（captures>0）→ 超级工兵
+  // - 普通子 rank 高于基础值 → 按军衔阶梯显示新军衔名（如排长升到连长即显示"连长"）
+  // - 其余（含特殊子、未升级子、经典模式）→ 原类型名，与旧行为一致
+  function pieceName(piece) {
+    if (!piece) return '';
+    if (piece.type === 'engineer' && (piece.captures || 0) > 0) return '超级工兵';
+    const base = PIECES[piece.type];
+    if (base && piece.rank && piece.rank !== base.rank && RANK_NAMES[piece.rank]) return RANK_NAMES[piece.rank];
+    return base ? base.name : '';
+  }
+
+  // 升级播报文案（toast 用）：prm = { side, type, fromRank, rank, captures }
+  function promotionText(prm) {
+    if (!prm) return '';
+    const who = SIDE_NAME[prm.side] || '';
+    if (prm.type === 'engineer') {
+      return prm.captures <= 1
+        ? '⬆ ' + who + '工兵 升级为 超级工兵 · 战力 ' + prm.rank
+        : '⬆ ' + who + '超级工兵 战力 +1 → ' + prm.rank;
+    }
+    return '⬆ ' + who + (RANK_NAMES[prm.fromRank] || '棋子') + ' 升级为 ' + (RANK_NAMES[prm.rank] || '更高军衔');
+  }
+
   // 困局兜底：连续 STALE_ROUNDS 回合无吃子且无翻棋则判和
   // 一回合 = 双方各走一步 = 2 个单方动作(ply)；staleCount 以 ply 计数
   const STALE_ROUNDS = 40;
@@ -65,6 +101,13 @@
     flag: 1000,
   };
 
+  // 军衔价值阶梯（AI 估值用）：rank → 价值，由 PIECE_VALUE 反查生成，与之恒同步。
+  // 娱乐模式下升级子按当前 rank 在此表取值（见 ai.js valueOfPiece）。
+  const RANK_VALUE = {};
+  for (const t in PIECES) {
+    if (PIECES[t].rank >= 1) RANK_VALUE[PIECES[t].rank] = PIECE_VALUE[t];
+  }
+
   // 阵营
   const SIDES = ['red', 'blue'];
 
@@ -76,7 +119,8 @@
     VERSION, ROWS, COLS, CELL_COUNT,
     PIECES, PIECES_PER_SIDE, MINES_PER_SIDE, IMMOBILE,
     DIFFICULTY, STALE_ROUNDS, STALE_LIMIT,
+    VARIANTS, RANK_MAX, RANK_NAMES, SIDE_NAME, pieceName, promotionText,
     RIVER_COLS, RIVER_TOP_ROW, RIVER_BOT_ROW,
-    PIECE_VALUE, SIDES, opposite,
+    PIECE_VALUE, RANK_VALUE, SIDES, opposite,
   };
 })();

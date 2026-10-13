@@ -159,6 +159,14 @@
       noiseHit({ t0: t, dur: 0.05, filter: 'highpass', freq: 3000, gain: 0.11 });
     },
 
+    promote() { // 军衔升级（娱乐玩法）：五声音阶上行三连 + 高频金属微光
+      const t = ctx.currentTime;
+      tone(P.G4, { type: 'triangle', t0: t, dur: 0.10, gain: 0.15 });
+      tone(P.D5, { type: 'triangle', t0: t + 0.09, dur: 0.11, gain: 0.15 });
+      tone(P.A5, { type: 'triangle', t0: t + 0.18, dur: 0.20, gain: 0.13 });
+      noiseHit({ t0: t + 0.18, dur: 0.05, filter: 'highpass', freq: 3400, gain: 0.06 });
+    },
+
     invalid() { // 非法操作：低频双响（配格子闪红）
       const t = ctx.currentTime;
       tone(150, { type: 'square', t0: t, dur: 0.07, gain: 0.11 });

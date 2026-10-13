@@ -107,3 +107,38 @@ test('ui: gameoverTitle — 人机分你/AI，pvp 分红蓝，和局统一', () 
   draw.winner = 'draw';
   assert.strictEqual(UI.gameoverTitle(draw), '和局');
 });
+
+// ============ v1.2.0 娱乐·军衔升级玩法：显示纯函数 ============
+test('ui: pieceName — 升级子显示新军衔名，超级工兵专名，经典/特殊子不受影响', () => {
+  assert.strictEqual(C.pieceName({ type: 'platoon', rank: 2, side: 'red' }), '排长');
+  assert.strictEqual(C.pieceName({ type: 'platoon', rank: 3, side: 'red' }), '连长');
+  assert.strictEqual(C.pieceName({ type: 'general', rank: 9, side: 'red' }), '司令');
+  assert.strictEqual(C.pieceName({ type: 'engineer', rank: 1, side: 'red' }), '工兵');
+  assert.strictEqual(C.pieceName({ type: 'engineer', rank: 2, side: 'red', captures: 1 }), '超级工兵');
+  assert.strictEqual(C.pieceName({ type: 'engineer', rank: 10, side: 'red', captures: 9 }), '超级工兵');
+  assert.strictEqual(C.pieceName({ type: 'mine', rank: 0, side: 'red' }), '地雷');
+  assert.strictEqual(C.pieceName({ type: 'bomb', rank: 0, side: 'red' }), '炸弹');
+  assert.strictEqual(C.pieceName(null), '');
+  // lastMove / lastMove.battle 记录形态（type+rank+captures）可直接取名
+  assert.strictEqual(C.pieceName({ type: 'company', rank: 3 }), '连长');
+});
+
+test('ui: promotionText — 工兵首升 / 超级工兵战力累加 / 普通升级 播报', () => {
+  const t1 = C.promotionText({ side: 'red', type: 'engineer', fromRank: 1, rank: 2, captures: 1 });
+  assert.ok(t1.includes('超级工兵') && t1.includes('战力 2') && t1.includes('红方'), t1);
+  const t2 = C.promotionText({ side: 'blue', type: 'engineer', fromRank: 4, rank: 5, captures: 4 });
+  assert.ok(t2.includes('战力 +1 → 5') && t2.includes('蓝方'), t2);
+  const t3 = C.promotionText({ side: 'red', type: 'platoon', fromRank: 2, rank: 3, captures: 0 });
+  assert.ok(t3.includes('排长') && t3.includes('连长'), t3);
+});
+
+test('ui: trackerData 不受升级影响 — 计数仍按 type 口径', () => {
+  const st = emptyState();
+  st.board[idx(0, 0)] = { piece: { type: 'platoon', rank: 3, side: 'red' }, revealed: true }; // 升级排长
+  st.board[idx(0, 1)] = { piece: { type: 'engineer', rank: 4, side: 'blue', captures: 3 }, revealed: true }; // 超级工兵
+  const t = UI.trackerData(st);
+  assert.strictEqual(t.hidden.red.platoon, 2, '升级排长仍占排长口径（3−1已翻）');
+  assert.strictEqual(t.hidden.red.company, 3, '不会错记到连长口径');
+  assert.strictEqual(t.hidden.blue.engineer, 2);
+  assert.strictEqual(t.lost.red.length, 0);
+});

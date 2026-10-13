@@ -8,8 +8,7 @@
   const B = NS.Junqi.board;
 
   const NS_NAME = { red: '红', blue: '蓝' };
-  const PIECE_NAME = {};
-  for (const t in C.PIECES) PIECE_NAME[t] = C.PIECES[t].name;
+  // 棋子名统一走 C.pieceName(piece)（升级感知）；type→基础名映射由 constants.PIECES 提供
 
   // ---- 几何 ----
   const CELL = 1, MARGIN = 0.45, RIVER = 1.0, COLS = C.COLS, ROWS = C.ROWS;
@@ -208,7 +207,7 @@
     const cell = state.board[i];
     if (!cell.piece) s += '，空';
     else if (!cell.revealed) s += '，未翻';
-    else s += '，' + NS_NAME[cell.piece.side] + ' ' + PIECE_NAME[cell.piece.type];
+    else s += '，' + NS_NAME[cell.piece.side] + ' ' + C.pieceName(cell.piece);
     return s;
   }
 
@@ -277,8 +276,27 @@
       }
       if (cell.revealed) {
         const g = el('g', { class: 'piece-g side-' + cell.piece.side + anim }, pl);
+        const nm = C.pieceName(cell.piece); // 升级感知：升级子显示新军衔名，吃过子的工兵显示"超级工兵"
+        const promoted = cell.piece.rank !== C.PIECES[cell.piece.type].rank;
+        if (promoted) {
+          // 金环标识：一眼区分"升上来的子"（如排长升成的连长）与原生同军衔子
+          el('circle', { cx: ccx, cy: ccy, r: CELL * 0.415, fill: 'none', stroke: 'var(--gold)', 'stroke-width': 0.035, opacity: 0.95 }, g);
+        }
         el('circle', { cx: ccx, cy: ccy, r: CELL * 0.36, fill: 'var(--p-' + cell.piece.side + ')', stroke: 'var(--p-' + cell.piece.side + '-ring)', 'stroke-width': 0.04 }, g);
-        el('text', { x: ccx, y: ccy, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'piece-text side-text-' + cell.piece.side }, g).textContent = PIECE_NAME[cell.piece.type];
+        if (nm.length > 2) {
+          // 四字名（超级工兵）：两行排版缩进圆内
+          const t = el('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'piece-text piece-text-2l side-text-' + cell.piece.side }, g);
+          el('tspan', { x: ccx, y: ccy - 0.15 }, t).textContent = nm.slice(0, 2);
+          el('tspan', { x: ccx, y: ccy + 0.15 }, t).textContent = nm.slice(2);
+        } else {
+          el('text', { x: ccx, y: ccy, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'piece-text side-text-' + cell.piece.side }, g).textContent = nm;
+        }
+        if (cell.piece.type === 'engineer' && (cell.piece.captures || 0) > 0) {
+          // 超级工兵战力角标：数字 = 当前战力（与普通军衔数值同场比较：排长2 … 司令9）
+          const bx = ccx + CELL * 0.30, by = ccy - CELL * 0.30;
+          el('circle', { cx: bx, cy: by, r: CELL * 0.14, fill: 'var(--gold)', stroke: '#241c0e', 'stroke-width': 0.025 }, g);
+          el('text', { x: bx, y: by, 'text-anchor': 'middle', 'dominant-baseline': 'central', class: 'power-badge-text' }, g).textContent = String(cell.piece.rank);
+        }
       } else {
         const g = el('g', { class: 'piece-g back' + anim }, pl);
         el('circle', { cx: ccx, cy: ccy, r: CELL * 0.36, fill: 'var(--p-back)', stroke: 'var(--p-back-ring)', 'stroke-width': 0.04 }, g);
@@ -353,7 +371,7 @@
     autodestruct(ring, 600);
     let label = '';
     if (lm.battle.outcome === 'flag') label = '夺旗！';
-    else if (lm.battle.outcome === 'win') label = '吃 ' + PIECE_NAME[lm.battle.type];
+    else if (lm.battle.outcome === 'win') label = '吃 ' + C.pieceName(lm.battle);
     else if (lm.battle.outcome === 'both') label = '同归于尽';
     else if (lm.battle.outcome === 'lose') label = '败';
     if (label) {
@@ -395,13 +413,13 @@
   // 把 state.lastMove 描述成一行中文
   function describeLastMove(lm) {
     if (!lm) return '';
-    const side = NS_NAME[lm.side] + ' ' + PIECE_NAME[lm.type];
+    const side = NS_NAME[lm.side] + ' ' + C.pieceName(lm);
     if (lm.kind === 'flip') {
       return '翻开 ' + side + ' @ ' + cellLabel(lm.index);
     }
     const move = side + ' ' + cellLabel(lm.from) + '→' + cellLabel(lm.to);
     if (!lm.battle) return move;
-    const dfn = NS_NAME[lm.battle.side] + ' ' + PIECE_NAME[lm.battle.type];
+    const dfn = NS_NAME[lm.battle.side] + ' ' + C.pieceName(lm.battle);
     switch (lm.battle.outcome) {
       case 'win':  return move + ' · 吃 ' + dfn;
       case 'lose': return move + ' · 败于 ' + dfn;

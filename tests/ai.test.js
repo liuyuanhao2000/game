@@ -779,3 +779,68 @@ test('ai: 反向走子惩罚 — chooseHard 不选撤销自己上一步的安静
   assert.ok(!(a.kind === 'move' && a.from === idx(2, 0) && a.to === idx(2, 1)),
     '不应选反向着回营，got ' + JSON.stringify(a));
 });
+
+// ============ v1.2.0 娱乐·军衔升级玩法：AI 估值与 make/unmake 一致性 ============
+test('ai: valueOfPiece — 未升级子与 PIECE_VALUE 逐位一致，升级子按军衔阶梯估值', () => {
+  for (const t in C.PIECES) {
+    const p = { type: t, rank: C.PIECES[t].rank, side: 'red' };
+    assert.strictEqual(AI.valueOfPiece(p), C.PIECE_VALUE[t], t + ': 未升级子估值必须与经典一致');
+  }
+  assert.strictEqual(AI.valueOfPiece({ type: 'platoon', rank: 3, side: 'red' }), C.PIECE_VALUE.company, '升级排长按连长估值');
+  assert.strictEqual(AI.valueOfPiece({ type: 'general', rank: 9, side: 'red' }), C.PIECE_VALUE.commander, '升级军长按司令估值');
+  // 超级工兵：军衔阶梯 + 挖雷溢价(10)；战力>9 在司令价上继续抬
+  assert.strictEqual(AI.valueOfPiece({ type: 'engineer', rank: 2, side: 'red', captures: 1 }), 22);
+  assert.strictEqual(AI.valueOfPiece({ type: 'engineer', rank: 4, side: 'red', captures: 3 }), C.PIECE_VALUE.battalion + 10);
+  assert.strictEqual(AI.valueOfPiece({ type: 'engineer', rank: 10, side: 'red', captures: 9 }), C.PIECE_VALUE.commander + 20);
+});
+
+test('ai: threatWeight — 两参旧签名行为不变；piece 参下超级工兵不再按普通工兵折价', () => {
+  assert.strictEqual(AI.threatWeight('engineer', 3), 0.5, '旧签名回归');
+  assert.strictEqual(AI.threatWeight('general', 3), 0.6, '旧签名回归');
+  const plain = { type: 'engineer', rank: 1, side: 'red' };
+  assert.strictEqual(AI.threatWeight('engineer', 3, plain), 0.5, '普通工兵仍按拔雷资产权重');
+  const sup3 = { type: 'engineer', rank: 4, side: 'red', captures: 3 }; // 价值 35 ≥ 30
+  assert.strictEqual(AI.threatWeight('engineer', 3, sup3), 0.35);
+  const sup7 = { type: 'engineer', rank: 8, side: 'red', captures: 7 }; // 价值 90 ≥ 60
+  assert.strictEqual(AI.threatWeight('engineer', 3, sup7), 0.6);
+});
+
+test('ai: rankUp 玩法下 chooseMove 不得篡改输入状态（升级不泄漏 make/unmake），快照与活状态一致', () => {
+  const st = midgameState();
+  st.variant = 'rankUp';
+  const snap = JSON.parse(JSON.stringify(st));
+  const origRandom = Math.random;
+  const reseed = () => {
+    let a = 987654321;
+    Math.random = () => {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+  try {
+    for (const diff of [C.DIFFICULTY.MEDIUM, C.DIFFICULTY.HARD, C.DIFFICULTY.MASTER]) {
+      const sigBefore = boardSig(st);
+      reseed();
+      const aLive = AI.chooseMove(st, diff, 'blue');
+      assert.strictEqual(boardSig(st), sigBefore, diff + ': rankUp 搜索不得把升级泄漏回原局面');
+      reseed();
+      const aSnap = AI.chooseMove(snap, diff, 'blue');
+      assert.deepStrictEqual(aSnap, aLive, diff + ': rankUp 快照与活状态应产出相同动作');
+    }
+  } finally {
+    Math.random = origRandom;
+  }
+});
+
+test('ai: rankUp quiesce 展开吃子链后逐位还原（含 rank/captures）', () => {
+  const st = emptyState('red');
+  st.variant = 'rankUp';
+  place(st, 0, 1, 'platoon', 'red');
+  place(st, 0, 2, 'engineer', 'blue');
+  const sig = boardSig(st);
+  const q = AI.quiesce(st, 'red', -Infinity, Infinity, 4);
+  assert.strictEqual(boardSig(st), sig, 'quiesce 后局面必须逐位一致（升级克隆不得残留）');
+  assert.ok(q > 0, '红吃工兵后蓝无子可动应判胜势，实际 ' + q);
+});

@@ -387,3 +387,31 @@ test('checkWinner: no-moves loss takes priority over stale-draw', () => {
   // 即使困局计数到顶，蓝方无路可走应判蓝负（红胜），而非和棋
   assert.strictEqual(R.checkWinner(st), 'red');
 });
+
+// ============ 娱乐·军衔升级玩法：升级子交战语义（resolveBattle 纯 rank 驱动，玩法无关）============
+test('rules: 超级工兵按战力数值同场比较，排雷能力保留', () => {
+  const sup = (rank, caps) => ({ type: 'engineer', rank, side: 'red', captures: caps });
+  // 战力5 vs 团长(5)：同归于尽
+  assert.strictEqual(R.resolveBattle(sup(5, 4), piece('regiment', 'blue')).to, null);
+  // 战力5 vs 营长(4)：超级工兵存活（resolveBattle 不改子——升级在 state.applyBattle 层落地）
+  const win = R.resolveBattle(sup(5, 4), piece('battalion', 'blue'));
+  assert.strictEqual(win.to.piece.rank, 5);
+  assert.strictEqual(win.to.piece.captures, 4);
+  // 战力5 vs 司令(9)：超级工兵阵亡
+  const lose = R.resolveBattle(sup(5, 4), piece('commander', 'blue'));
+  assert.strictEqual(lose.to.piece.type, 'commander');
+  // 战力10（吃过9子）vs 司令(9)：可吃司令
+  const top = R.resolveBattle(sup(10, 9), piece('commander', 'blue'));
+  assert.strictEqual(top.to.piece.type, 'engineer');
+  // 排雷保留：高战力超级工兵 vs 地雷 → 挖雷存活（地雷分支先于 rank 比较）
+  const dig = R.resolveBattle(sup(5, 4), piece('mine', 'blue'));
+  assert.strictEqual(dig.to.piece.type, 'engineer');
+  assert.strictEqual(dig.flagCaptured, false);
+});
+
+test('rules: 升级普通子按新军衔作战 — 排长升到战力3与连长同归、吃排长', () => {
+  const promoted = { type: 'platoon', rank: 3, side: 'red' };
+  assert.strictEqual(R.resolveBattle(promoted, piece('company', 'blue')).to, null);
+  const win = R.resolveBattle(promoted, piece('platoon', 'blue'));
+  assert.strictEqual(win.to.piece, promoted);
+});
