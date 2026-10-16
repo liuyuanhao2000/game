@@ -30,6 +30,16 @@
 
 设计细节见 [docs/superpowers/specs/2026-10-12-fun-mode-rank-upgrade-design.md](docs/superpowers/specs/2026-10-12-fun-mode-rank-upgrade-design.md)。
 
+## 悔棋（v1.3.0+）
+
+顶栏「悔棋」按钮，单击即生效，**次数不限**：
+
+- **人机对战**：一次撤销**一整回合**（你的一步 + AI 应手），回到你走子前的局面、仍轮你走；首翻悔棋会连「定阵营」一并撤销。AI 思考中也可悔棋（在飞的思考自动作废，不会污染回退后的局面）。
+- **双人同屏**：一次撤销**一步**，轮到对方重走。
+- 复活棋子的记牌器「阵亡名册」会同步回退；**终局后不可悔棋**（需点「再来一局」）；重新开局 / 换模式会清空悔棋历史。
+
+设计细节见 [docs/superpowers/specs/2026-10-16-undo-design.md](docs/superpowers/specs/2026-10-16-undo-design.md)。
+
 ## 运行
 
 直接双击 `index.html` 打开即可（file://）。也可用本地服务器：

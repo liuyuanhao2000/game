@@ -13,7 +13,7 @@
       <div class="topbar-row topbar-row-main">
         <div class="brand">
           <h1>军旗翻翻棋</h1>
-          <span class="version" id="version" title="版本号">v1.2.0</span>
+          <span class="version" id="version" title="版本号">v1.3.0</span>
           <span class="variant-badge hidden" id="variant-badge" title="当前玩法：娱乐·军衔升级（吃子升军衔）">娱乐·军衔升级</span>
         </div>
         <div class="top-actions">
@@ -29,6 +29,7 @@
           <button type="button" data-diff="master" class="active" aria-pressed="true">大师</button>
         </div>
         <button id="switch-mode" class="btn-ghost" title="切换对战模式">换模式</button>
+        <button id="undo" class="btn-ghost" title="悔棋：人机撤回一整回合，双人撤回一步">悔棋</button>
         <button id="restart" class="btn-seal">重新开局</button>
       </div>
     </header>
@@ -276,6 +277,9 @@
         armTimer = setTimeout(disarmRestart, 2500);
       }
     });
+
+    // 悔棋：单击即生效、次数不限；终局/无步数/AI 思考中等守卫全在 main.undo() 内（toast 反馈）
+    document.getElementById('undo').addEventListener('click', () => { Junqi.main.undo(); });
 
     // 规则弹窗：Esc / 点击遮罩关闭 + 焦点管理与还原
     const modal = document.getElementById('rules-modal');

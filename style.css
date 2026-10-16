@@ -71,7 +71,8 @@ body {
 
 /* ---- 顶栏：两行式 ---- */
 .topbar { display: flex; flex-direction: column; gap: 10px; }
-.topbar-row { display: flex; align-items: center; gap: 8px; }
+/* wrap：v1.3.0 顶栏第二行新增「悔棋」后，窄屏（~360px）人机模式 4+3 个按钮可能溢出，允许换行（宽屏无副作用） */
+.topbar-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .topbar-row-main { justify-content: space-between; }
 .brand { display: flex; align-items: baseline; gap: 2px; min-width: 0; }
 .topbar h1 {

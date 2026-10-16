@@ -167,6 +167,12 @@
       noiseHit({ t0: t + 0.18, dur: 0.05, filter: 'highpass', freq: 3400, gain: 0.06 });
     },
 
+    undo() { // 悔棋：下行双音（时间回拨感，与 promote 上行三连互为镜像）
+      const t = ctx.currentTime;
+      tone(P.D5, { type: 'triangle', t0: t, dur: 0.09, gain: 0.13 });
+      tone(P.G4, { type: 'triangle', t0: t + 0.08, dur: 0.13, gain: 0.12 });
+    },
+
     invalid() { // 非法操作：低频双响（配格子闪红）
       const t = ctx.currentTime;
       tone(150, { type: 'square', t0: t, dur: 0.07, gain: 0.11 });

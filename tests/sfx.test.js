@@ -24,7 +24,7 @@ test('sfx: soundFor 事件→音效名 全映射', () => {
 });
 
 test('sfx: 无 AudioContext 环境（node/桩）下 play 静默不抛错', () => {
-  const names = ['select', 'flip', 'move', 'capture', 'die', 'both', 'bomb', 'mine', 'invalid', 'win', 'lose', 'draw', 'nope'];
+  const names = ['select', 'flip', 'move', 'capture', 'die', 'both', 'bomb', 'mine', 'undo', 'invalid', 'win', 'lose', 'draw', 'nope'];
   assert.doesNotThrow(() => { for (const n of names) sfx.play(n); });
 });
 
@@ -54,7 +54,7 @@ test('sfx: FakeAudioContext 下全部音效能播放、静音后不再创建节�
   global.AudioContext = FakeAudioContext;
   try {
     sfx.setMuted(false);
-    const names = ['select', 'flip', 'move', 'capture', 'die', 'both', 'bomb', 'mine', 'invalid', 'win', 'lose', 'draw'];
+    const names = ['select', 'flip', 'move', 'capture', 'die', 'both', 'bomb', 'mine', 'undo', 'invalid', 'win', 'lose', 'draw'];
     for (const n of names) assert.doesNotThrow(() => sfx.play(n), '音效 ' + n + ' 不应抛错');
     assert.ok(oscCount > 0, '应创建振荡器节点');
     const before = oscCount;

@@ -23,6 +23,11 @@
   // UI 瞬态（选中/落点）不挂在游戏状态上，保持 state 纯粹、可序列化
   let selIndex = null;
   let selTargets = null;
+  // 悔棋历史：整状态快照栈（snapshot 为 JSON 往返，无 onChange）。
+  // 唯一压栈点在 commitAction（人类走子前），因此每个快照都恰在人类回合边界、
+  // 其后 0 或 1 个 AI 步 → 人机模式一次 pop = 撤销「我的一步 + AI 应手」整回合；
+  // pvp 双方共用 commitAction，一次 pop = 撤销一步。start() 清空防跨局泄漏。
+  let history = [];
 
   // 纯数据快照：JSON 往返静默丢弃 onChange 等函数，保留全部纯数据（<1ms）
   function snapshot(st) { return JSON.parse(JSON.stringify(st)); }
@@ -49,6 +54,7 @@
   }
 
   function start() {
+    history = []; // 新局清空悔棋栈：旧发牌的快照不得跨局/跨模式复活
     state = STATE.createInitialState({ mode, variant });
     state.onChange = () => UI.render(state);
     const vEl = document.getElementById('version');
@@ -76,6 +82,30 @@
     thinkId++; // 使 worker 中悬挂的思考结果作废（回来时按 id 检查丢弃）
     killWorker(); // 终止仍在思考的旧线程：重开新局后不应让它跑满预算白烧 CPU
     start();
+  }
+
+  // 悔棋：人机撤销一整回合（我的一步 + AI 应手），双人撤销一步；不限次数。
+  // AI 思考中也允许——被撤销的回合包含尚未落下的应手，先跑失效三部曲
+  // （与 reset 同款：清 aiTimer / thinkId++ / killWorker），迟到的思考结果
+  // 按 id 作废，不会污染回退后的局面。终局后禁止悔棋（用户约定）。
+  function undo() {
+    if (!state) return;
+    if (state.winner) { UI.toast('对局已结束，无法悔棋'); return; }
+    if (!history.length) { UI.toast('暂无可悔棋的步数'); return; }
+    if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; } // 覆盖 450ms 挂起窗口
+    thinkId++;
+    killWorker();
+    // 对象替换而非字段拷贝：升级音定时器（soundAfterApply 的 state === st）与
+    // 终局 700ms 弹层（ui.js 的 state === liveState）都是身份比较、围绕换对象
+    // 设计的过期守卫——替换让旧局面的挂起回调自动失效，字段拷贝则会漏播/误弹。
+    state = history.pop();
+    state.onChange = () => UI.render(state); // JSON 快照无函数字段，重挂（同 start）
+    clearSel(); // 选中高亮是旧局面瞬态，可能指向已复原的暗格
+    UI.rebuildTracker(); // 阵亡名册是只增 diff，复活棋子必须清缓存重建（ui.js）
+    UI.markLastMoveRendered(state); // 抑制恢复出的旧 lastMove 重播入场动画
+    UI.render(state);
+    SFX.play('undo');
+    scheduleAI(); // 防御性：快照恒为人类回合边界 → 正常是 no-op，防意外态 AI 停摆
   }
 
   function isPlayerTurn() {
@@ -159,15 +189,18 @@
     // 先清选中高亮：applyMove 成功后 onChange 会恰好渲染一次，
     // 若此处再渲染一次会打断入场动画；提前清掉即可让那一次渲染不带选框。
     clearSel();
+    const snap = snapshot(state); // 必须在 applyMove 原地变异之前拍
     const ok = STATE.applyMove(state, action);
     if (!ok) {
-      // 状态层拒绝（轮次/可达性）：反馈并重绘以清除选框
+      // 状态层拒绝（轮次/可达性）：反馈并重绘以清除选框。
+      // 被拒走子不入栈——否则悔棋会消耗一次点击却看似原地空转。
       if (action.to != null) UI.flashInvalid(action.to);
       UI.render(state);
       UI.toast('非法操作，已忽略');
       SFX.play('invalid');
       return;
     }
+    history.push(snap);
     soundAfterApply();
     scheduleAI();
   }
@@ -286,7 +319,7 @@
 
   // 暴露调试接口
   NS.Junqi.main = {
-    start, setDifficulty, setMode, setVariant, reset,
+    start, setDifficulty, setMode, setVariant, reset, undo,
     getState: () => state,
     legalMoves: (i) => state ? R.legalMoves(state, i) : [],
   };

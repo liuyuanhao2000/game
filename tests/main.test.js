@@ -38,6 +38,8 @@ require('../js/ai.js');
 
 // 桩 UI/SFX：只捕获 onSelect 回调，其余为 no-op。
 // soundFor 记录调用：soundAfterApply 每次必然调它，是"被拒走子是否误播音效"的观测点。
+// 注：本文件从不调用 MAIN.undo()，故桩无需悔棋专用导出（rebuildTracker /
+// markLastMoveRendered）；若将来在此新增 undo 用例，须按 tests/undo.test.js 的桩补齐。
 let onSelect = null;
 const sfxCalls = [];
 const soundForCalls = [];

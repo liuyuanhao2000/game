@@ -598,6 +598,15 @@
     }
   }
 
+  // 悔棋恢复专用：阵亡名册是 append-only diff（假设 state.captured 局内只增），
+  // 悔棋复活棋子后 prevLost 高水位会让再次被吃的同名子 delta≤0 → chip 永久缺失。
+  // buildTracker 幂等且重置全部缓存（prevLost / hiddenEls.prev），清重建即可。
+  function rebuildTracker() { buildTracker(); }
+
+  // 悔棋恢复专用：把恢复出的 lastMove 标记为"已播过动画"。render/maybeFx 均按
+  // 引用比较 renderedLastMove，快照还原的是新对象，不标记会重播一次入场动画。
+  function markLastMoveRendered(st) { renderedLastMove = st ? st.lastMove : null; }
+
   function renderTracker(state) {
     if (!trackerBuilt) return;
     const data = trackerData(state);
@@ -780,6 +789,6 @@
 
   NS.Junqi.ui = {
     init, render, setSelection, clearSelection, toast, flashInvalid, trackerData,
-    statusText, gameoverTitle,
+    statusText, gameoverTitle, rebuildTracker, markLastMoveRendered,
   };
 })();
