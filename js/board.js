@@ -10,6 +10,10 @@
   const idx = (r, c) => r * COLS + c;
   const rc = (i) => [Math.floor(i / COLS), i % COLS];
 
+  // 跨楚河上下镜像：(r,c) ↔ (ROWS-1-r,c)，同列、行翻转。
+  // 地形（行营/铁路/楚河）在该映射下自对称，供「镜像明棋」发牌与测试使用。
+  const mirrorIndex = (i) => { const [r, c] = rc(i); return idx(ROWS - 1 - r, c); };
+
   // 地形类型
   // 行营梅花位（0-based row,col），对应 spec R3/R4/R5 上半 与 R8/R9/R10 下半：
   const CAMP_CELLS = [
@@ -126,7 +130,7 @@
   }
 
   NS.Junqi.board = {
-    ROWS, COLS, idx, rc,
+    ROWS, COLS, idx, rc, mirrorIndex,
     terrain, terrainAt,
     isAdjacent, isDiagAdjacent,
     orthNeighbors, diagNeighbors,

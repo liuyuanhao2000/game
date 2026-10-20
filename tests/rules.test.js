@@ -59,6 +59,21 @@ test('terrain: C1 vertical rail does not reach R1', () => {
   assert.strictEqual(B.terrainAt(idx(0,0)), 'normal');
 });
 
+// ============ 镜像明棋：跨楚河镜像坐标 ============
+test('mirror: mirrorIndex 同列跨河翻转，二次镜像回原格', () => {
+  assert.strictEqual(B.mirrorIndex(idx(0, 0)), idx(11, 0));
+  assert.strictEqual(B.mirrorIndex(idx(11, 4)), idx(0, 4));
+  assert.strictEqual(B.mirrorIndex(idx(5, 2)), idx(6, 2)); // R6C3 ↔ R7C3
+  for (const i of [0, 7, 33, 59]) {
+    assert.strictEqual(B.mirrorIndex(B.mirrorIndex(i)), i, 'idx ' + i);
+  }
+});
+test('mirror: 地形在跨河镜像下自对称（行营/铁路/楚河）', () => {
+  for (let i = 0; i < 60; i++) {
+    assert.strictEqual(B.terrainAt(B.mirrorIndex(i)), B.terrainAt(i), '地形不对称: idx ' + i);
+  }
+});
+
 // ============ B. 楚河邻接 ============
 test('river: C2/C4 blocked across R6-R7', () => {
   assert.strictEqual(B.isAdjacent(idx(5,1), idx(6,1)), false); // C2

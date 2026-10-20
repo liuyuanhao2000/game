@@ -28,27 +28,64 @@
     return arr;
   }
 
+  // 镜像明棋发牌：跨楚河镜像对 (r,c) ↔ (11-r,c) 共 25 对（行营恒空）。
+  // 每对随机选一格给红方，蓝方占镜像格；红方 25 枚棋子洗牌后落位，镜像格放同类型蓝子。
+  // 结果：50 个非行营格全部有子（25 红 + 25 蓝），全部明置、无暗子。
+  function fillMirrorBoard(board) {
+    const redSlots = [];
+    for (let i = 0; i < C.CELL_COUNT; i++) {
+      if (B.terrainAt(i) === 'camp') continue;
+      const m = B.mirrorIndex(i);
+      if (i >= m) continue; // 每个镜像对只处理一次（上半行索引恒小于下半镜像行）
+      redSlots.push(Math.random() < 0.5 ? i : m);
+    }
+    const redPieces = shuffle(buildPieces().filter((p) => p.side === 'red'));
+    for (let k = 0; k < redSlots.length; k++) {
+      const i = redSlots[k];
+      const m = B.mirrorIndex(i);
+      const p = redPieces[k];
+      board[i] = { piece: p, revealed: true };
+      board[m] = { piece: { type: p.type, rank: p.rank, side: 'blue' }, revealed: true };
+    }
+  }
+
   function createInitialState(opts) {
     const mode = (opts && opts.mode) || 'ai'; // 'ai'=人机 | 'pvp'=双人同屏
-    const variant = (opts && opts.variant) || C.VARIANTS.CLASSIC; // 玩法：'classic'=经典 | 'rankUp'=娱乐·军衔升级
+    const variant = (opts && opts.variant) || C.VARIANTS.CLASSIC; // 经典 | 娱乐·军衔升级 | 娱乐·镜像明棋
     const board = new Array(C.CELL_COUNT);
     for (let i = 0; i < C.CELL_COUNT; i++) board[i] = { piece: null, revealed: false };
-    // 随机摆放 50 子；行营格不放棋子（10 个行营格保持空）
-    const nonCampSlots = shuffle(
-      [...Array(C.CELL_COUNT).keys()].filter((i) => B.terrainAt(i) !== 'camp')
-    );
-    const pieces = shuffle(buildPieces());
-    for (let i = 0; i < pieces.length; i++) {
-      board[nonCampSlots[i]] = { piece: pieces[i], revealed: false };
+    let turn = null, sidesAssigned = false, controllers = { red: null, blue: null };
+    if (variant === C.VARIANTS.MIRROR_OPEN) {
+      // 明棋镜像：全体已翻，无首翻定边；红方恒先行。
+      // 人机模式随机分边（若人执蓝，AI 红方在 main.start 后自动走第一步）。
+      fillMirrorBoard(board);
+      turn = 'red';
+      sidesAssigned = true;
+      if (mode === 'pvp') {
+        controllers = { red: 'human', blue: 'human' };
+      } else {
+        const humanSide = Math.random() < 0.5 ? 'red' : 'blue';
+        controllers[humanSide] = 'human';
+        controllers[C.opposite(humanSide)] = 'ai';
+      }
+    } else {
+      // 随机摆放 50 子；行营格不放棋子（10 个行营格保持空）
+      const nonCampSlots = shuffle(
+        [...Array(C.CELL_COUNT).keys()].filter((i) => B.terrainAt(i) !== 'camp')
+      );
+      const pieces = shuffle(buildPieces());
+      for (let i = 0; i < pieces.length; i++) {
+        board[nonCampSlots[i]] = { piece: pieces[i], revealed: false };
+      }
     }
     return {
       board,
       rows: C.ROWS, cols: C.COLS,
       mode,                      // 对局模式，供 UI/调度分支
-      variant,                   // 玩法（经典/娱乐·军衔升级），供 applyBattle/AI/UI 分支；随 JSON 快照进 worker
-      turn: null,                // 首次翻棋前为 null；任意可行动方先行翻棋
-      controllers: { red: null, blue: null }, // 每方操作者：'human'|'ai'，首次翻棋确定
-      sidesAssigned: false,
+      variant,                   // 玩法（经典/军衔升级/镜像明棋），供 applyBattle/AI/UI 分支；随 JSON 快照进 worker
+      turn,                      // 经典首次翻棋前为 null；镜像明棋恒为 'red'
+      controllers,               // 每方操作者：'human'|'ai'；经典首翻确定，镜像开局即定
+      sidesAssigned,
       winner: null,
       staleCount: 0,
       minesLost: { red: 0, blue: 0 }, // 每方已损失地雷数；拔满 3 才可吃其军旗

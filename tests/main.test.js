@@ -226,7 +226,40 @@ test('main: setVariant 传入 createInitialState — 玩法标记随 reset/start
   MAIN.setVariant('rankUp');
   MAIN.reset();
   assert.strictEqual(MAIN.getState().variant, 'rankUp');
+  MAIN.setVariant('mirrorOpen');
+  MAIN.reset();
+  assert.strictEqual(MAIN.getState().variant, 'mirrorOpen');
+  assert.strictEqual(MAIN.getState().sidesAssigned, true, '明棋开局即定边');
   MAIN.setVariant('classic');
   MAIN.reset();
   assert.strictEqual(MAIN.getState().variant, 'classic', '还原经典，避免污染后续用例');
+});
+
+// ---- v1.4.0 镜像明棋：人随机到蓝方时，AI 红方必须开局自动走第一步 ----
+test('main: 明棋人机随机分到蓝方 → AI 红方开局自动思考', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  // Math.random 固定 0.9：分边取蓝（>=0.5），镜像选格/洗牌仍落在合法范围
+  t.mock.method(Math, 'random', () => 0.9);
+  try {
+    workers.length = 0;
+    MAIN.setMode('ai');
+    MAIN.setDifficulty(C.DIFFICULTY.EASY);
+    MAIN.setVariant('mirrorOpen');
+    MAIN.start();
+    const st = MAIN.getState();
+    assert.deepStrictEqual(st.controllers, { red: 'ai', blue: 'human' });
+    assert.strictEqual(st.turn, 'red');
+    assert.strictEqual(st.lastMove, null);
+    assert.strictEqual(workers.length, 0, 'AI 开局思考应有 450ms 延迟');
+
+    t.mock.timers.tick(450);
+    assert.strictEqual(workers.length, 1, 'AI 应在开局自动思考');
+    assert.strictEqual(workers[0].posted.length, 1);
+    assert.strictEqual(workers[0].posted[0].side, 'red');
+    assert.strictEqual(workers[0].posted[0].state.variant, 'mirrorOpen',
+      'worker 快照必须携带玩法标记');
+  } finally {
+    MAIN.setVariant('classic');
+    MAIN.reset(); // 清理 worker / 挂起定时器
+  }
 });

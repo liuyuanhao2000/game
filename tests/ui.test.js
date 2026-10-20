@@ -142,3 +142,17 @@ test('ui: trackerData 不受升级影响 — 计数仍按 type 口径', () => {
   assert.strictEqual(t.hidden.blue.engineer, 2);
   assert.strictEqual(t.lost.red.length, 0);
 });
+
+// ============ v1.4.0 镜像明棋：记牌器数据层 ============
+test('ui: trackerData 镜像明棋局 — 未翻计数全为 0（全部明置）', () => {
+  const st = Junqi.state.createInitialState({ variant: 'mirrorOpen' });
+  const t = UI.trackerData(st);
+  for (const side of C.SIDES) {
+    for (const type in C.PIECES) {
+      assert.strictEqual(t.hidden[side][type], 0, side + ' ' + type + ' 不应有未翻子');
+    }
+  }
+  assert.strictEqual(t.lost.red.length, 0);
+  assert.strictEqual(t.lost.blue.length, 0);
+  assert.deepStrictEqual(t.minesLost, { red: 0, blue: 0 });
+});

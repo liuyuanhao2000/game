@@ -5,7 +5,7 @@
   const NS = (typeof window !== 'undefined') ? window : globalThis;
   NS.Junqi = NS.Junqi || {};
 
-  const VERSION = '1.3.0'; // 与 package.json 保持一致（tests/version.test.js 会校验）；界面版本号由此渲染
+  const VERSION = '1.4.0'; // 与 package.json 保持一致（tests/version.test.js 会校验）；界面版本号由此渲染
 
   const ROWS = 12;
   const COLS = 5;
@@ -40,10 +40,11 @@
   const DIFFICULTY = { EASY: 'easy', MEDIUM: 'medium', HARD: 'hard', MASTER: 'master' };
 
   // ---- 玩法（娱乐模式扩展位）----
-  // variant 与 mode('ai'|'pvp') 正交：经典模式规则恒定；娱乐模式首个玩法为军衔升级。
+  // variant 与 mode('ai'|'pvp') 正交：经典模式规则恒定；娱乐模式目前有军衔升级与镜像明棋。
   // 娱乐·军衔升级：战斗后存活方（非特殊子）自动升一级军衔（司令封顶）；
   // 工兵走特殊路径：吃子（含排雷）后成为超级工兵，战力 = 1 + 吃子数，移动方式不变、保留排雷能力。
-  const VARIANTS = { CLASSIC: 'classic', RANK_UP: 'rankUp' };
+  // 娱乐·镜像明棋：开局随机一份布局并跨楚河镜像给双方，所有棋子明置，全局无翻棋。
+  const VARIANTS = { CLASSIC: 'classic', RANK_UP: 'rankUp', MIRROR_OPEN: 'mirrorOpen' };
 
   // 军衔阶梯：rank 数值 → 名称（工兵1 … 司令9）；升级/显示/AI 估值共用
   const RANK_MAX = 9; // 普通棋子升级封顶（司令不再升）

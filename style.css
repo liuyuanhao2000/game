@@ -403,11 +403,21 @@ body {
 /* 模式选择弹窗 */
 .mode-content { text-align: center; }
 .variant-row { display: flex; margin: 12px 0 2px; }
+/* 三段玩法选择：窄屏允许换行，避免 7 字标签溢出 */
+.seg-variant { flex-wrap: wrap; }
+.seg-variant button { flex: 1 1 30%; min-width: 92px; font-size: 12px; }
 .variant-desc {
   font-size: 12px; color: var(--muted); line-height: 1.6;
   margin: 6px auto 0; max-width: 34em; text-align: left; min-height: 2.6em;
 }
 .fun-rule { color: var(--gold-soft); }
+/* 镜像明棋：无暗子，左侧透视分组隐藏后显示的说明 */
+.mirror-hint {
+  margin: 0 0 12px; font-size: 12px; line-height: 1.6;
+  color: var(--gold-soft); opacity: 0.9;
+}
+.mirror-hint.hidden { display: none; }
+#panel-spy.is-mirror .hidden-group { display: none; }
 .mode-buttons { display: flex; gap: 12px; margin: 14px 0 6px; flex-wrap: wrap; }
 .mode-btn {
   flex: 1 1 150px; display: flex; flex-direction: column; gap: 6px; align-items: center;

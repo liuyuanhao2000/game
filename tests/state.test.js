@@ -605,3 +605,78 @@ test('state(classic): 同款战斗不触发任何升级 — 经典模式回归�
   assert.strictEqual(after.captures, undefined);
   assert.strictEqual(st.lastMove.battle.promotion, null);
 });
+
+// ============ v1.4.0 娱乐·镜像明棋玩法（variant='mirrorOpen'）============
+test('state(mirrorOpen): 跨楚河镜像对称、全体明棋、非行营格全占', () => {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const st = S.createInitialState({ variant: 'mirrorOpen' });
+    let red = 0, blue = 0;
+    for (let i = 0; i < C.CELL_COUNT; i++) {
+      const c = st.board[i];
+      if (B.terrainAt(i) === 'camp') {
+        assert.strictEqual(c.piece, null, '行营必须为空: idx ' + i);
+        continue;
+      }
+      assert.ok(c.piece, '非行营格必须放子: idx ' + i);
+      assert.strictEqual(c.revealed, true, '所有棋子必须明置: idx ' + i);
+      if (c.piece.side === 'red') red++; else blue++;
+      const m = B.mirrorIndex(i);
+      assert.ok(st.board[m].piece, '镜像格必须有子');
+      assert.strictEqual(st.board[m].piece.type, c.piece.type, '镜像格同类型');
+      assert.strictEqual(st.board[m].piece.side, C.opposite(c.piece.side), '镜像格敌对阵营');
+    }
+    assert.strictEqual(red, 25);
+    assert.strictEqual(blue, 25);
+  }
+});
+
+test('state(mirrorOpen): 双方棋子构成与 PIECES 一致（各 25 枚）', () => {
+  const st = S.createInitialState({ variant: 'mirrorOpen' });
+  for (const side of C.SIDES) {
+    const counts = {};
+    for (let i = 0; i < C.CELL_COUNT; i++) {
+      const p = st.board[i].piece;
+      if (!p || p.side !== side) continue;
+      counts[p.type] = (counts[p.type] || 0) + 1;
+      assert.strictEqual(p.rank, C.PIECES[p.type].rank);
+    }
+    for (const t in C.PIECES) {
+      assert.strictEqual(counts[t], C.PIECES[t].count, side + ' ' + t);
+    }
+  }
+});
+
+test('state(mirrorOpen): 红方恒先行、开局即定边；人机一 human 一 ai，双人双 human', () => {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const st = S.createInitialState({ variant: 'mirrorOpen' });
+    assert.strictEqual(st.turn, 'red');
+    assert.strictEqual(st.sidesAssigned, true);
+    const ops = [st.controllers.red, st.controllers.blue].sort();
+    assert.deepStrictEqual(ops, ['ai', 'human'], '人机模式应随机分边且仅一方为 AI');
+  }
+  const pvp = S.createInitialState({ mode: 'pvp', variant: 'mirrorOpen' });
+  assert.strictEqual(pvp.turn, 'red');
+  assert.strictEqual(pvp.sidesAssigned, true);
+  assert.deepStrictEqual(pvp.controllers, { red: 'human', blue: 'human' });
+});
+
+test('state(mirrorOpen): 全局无暗子 — 枚举动作只有 move，flip 被拒绝', () => {
+  const st = S.createInitialState({ variant: 'mirrorOpen' });
+  const acts = R.enumerateActions(st, 'red');
+  assert.ok(acts.length > 0, '红方开局应有合法走法');
+  assert.ok(acts.every((a) => a.kind === 'move'), '不得出现 flip 动作');
+  assert.strictEqual(R.hasAnyLegalMove(st, 'red'), true);
+  assert.strictEqual(R.hasAnyLegalMove(st, 'blue'), true);
+  const occupied = st.board.findIndex((c) => c.piece);
+  assert.strictEqual(S.applyMove(st, { kind: 'flip', index: occupied }), false, '明棋不可翻');
+  assert.strictEqual(st.turn, 'red', '非法翻棋不切换回合');
+});
+
+test('state(mirrorOpen): variant/明置状态随 JSON 快照进 worker（纯数据）', () => {
+  const st = S.createInitialState({ variant: 'mirrorOpen' });
+  const snap = JSON.parse(JSON.stringify(st));
+  assert.strictEqual(snap.variant, 'mirrorOpen');
+  assert.strictEqual(snap.turn, 'red');
+  assert.strictEqual(snap.sidesAssigned, true);
+  assert.strictEqual(snap.board.filter((c) => c.piece && c.revealed).length, 50);
+});

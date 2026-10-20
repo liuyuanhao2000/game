@@ -13,7 +13,7 @@
       <div class="topbar-row topbar-row-main">
         <div class="brand">
           <h1>军旗翻翻棋</h1>
-          <span class="version" id="version" title="版本号">v1.3.0</span>
+          <span class="version" id="version" title="版本号">v1.4.0</span>
           <span class="variant-badge hidden" id="variant-badge" title="当前玩法：娱乐·军衔升级（吃子升军衔）">娱乐·军衔升级</span>
         </div>
         <div class="top-actions">
@@ -42,8 +42,9 @@
     <div class="battlefield">
       <!-- 左栏：未翻棋子透视（剧透模式，按阵营分列）+ 拔雷进度 -->
       <details class="panel panel-left" id="panel-spy" aria-label="记牌器：未翻棋子与拔雷进度" open>
-        <summary class="panel-title">未翻透视</summary>
+        <summary class="panel-title" id="panel-spy-title">未翻透视</summary>
         <div class="panel-body">
+          <p class="mirror-hint hidden" id="mirror-hint">明棋局：全部棋子已亮明，无需翻棋。</p>
           <div class="hidden-group">
             <h4 class="group-title group-red">红方未翻</h4>
             <div class="chips" id="hidden-red"></div>
@@ -95,17 +96,18 @@
           <div class="seg seg-variant" id="variant-seg" role="group" aria-label="玩法选择">
             <button type="button" data-variant="classic" class="active" aria-pressed="true">经典模式</button>
             <button type="button" data-variant="rankUp" aria-pressed="false">娱乐·军衔升级</button>
+            <button type="button" data-variant="mirrorOpen" aria-pressed="false">娱乐·镜像明棋</button>
           </div>
         </div>
         <p class="variant-desc" id="variant-desc"></p>
         <div class="mode-buttons">
           <button id="mode-ai" class="mode-btn">
             <span class="mode-name">🤖 人机对战</span>
-            <span class="mode-desc">与 AI 对弈，你先翻棋</span>
+            <span class="mode-desc" id="mode-ai-desc">与 AI 对弈，你先翻棋</span>
           </button>
           <button id="mode-pvp" class="mode-btn">
             <span class="mode-name">👥 双人同屏</span>
-            <span class="mode-desc">两人轮流操作，先翻者执翻出的颜色</span>
+            <span class="mode-desc" id="mode-pvp-desc">两人轮流操作，先翻者执翻出的颜色</span>
           </button>
         </div>
         <label class="mode-difficulty">AI 难度：
@@ -132,6 +134,7 @@
           <li>楚河仅在左(C1)/中(C3)/右(C5)三处可过。</li>
           <li><b>需先拔掉对方全部 3 颗地雷，才能攻击其军旗</b>；吃旗或炸旗即胜。令对方无路可走也胜（优先于和棋）；连续 40 回合无吃翻判和。</li>
           <li id="rules-fun" class="fun-rule hidden"><b>娱乐·军衔升级玩法</b>：战斗中<b>存活方自动升一级军衔</b>（攻防都算；同归于尽不升；司令封顶）。<b>工兵</b>吃子（含排雷）后成为<b>超级工兵</b>：移动方式不变、保留排雷能力，此后每吃一子<b>战力 +1</b>（角标数字），按战力与军衔同场比大小（排长=2 … 司令=9，超过 9 可吃司令）。</li>
+          <li id="rules-mirror" class="fun-rule hidden"><b>娱乐·镜像明棋玩法</b>：开局随机生成一份布局，蓝方棋子按<b>跨楚河上下镜像</b>摆放（同一列、行对称），双方子力完全一致；<b>所有棋子从一开始就亮明</b>，全局无需翻棋。人机模式<b>随机分边</b>，红方永远先行（若你执蓝，AI 红方先走）；双人同屏则红方先行。其余规则与经典相同。</li>
         </ul>
         <button id="rules-close">关闭</button>
       </div>
@@ -184,14 +187,23 @@
       Junqi.main.setDifficulty(b.dataset.diff);
     });
 
-    // ---- 玩法选择（经典 / 娱乐·军衔升级）：弹窗内 seg，选完模式一并生效 ----
+    // ---- 玩法选择（经典 / 军衔升级 / 镜像明棋）：弹窗内 seg，选完模式一并生效 ----
     const variantSeg = document.getElementById('variant-seg');
     const variantDesc = document.getElementById('variant-desc');
+    const modeAiDesc = document.getElementById('mode-ai-desc');
+    const modePvpDesc = document.getElementById('mode-pvp-desc');
     const VARIANT_DESC = {
       classic: '经典规则：大吃小、同级同归于尽。',
       rankUp: '娱乐玩法：战斗后存活方自动升一级军衔（司令封顶）；工兵吃子（含排雷）后成为超级工兵，此后每吃一子战力 +1，移动不变、保留排雷能力。',
+      mirrorOpen: '娱乐玩法：开局随机一次布局，蓝方按跨楚河镜像摆放（双方完全对称）；所有棋子明置，全局无需翻棋。人机随机分边，红方先行。',
     };
     let currentVariant = 'classic';
+    // 明棋无首翻：模式按钮描述改为“随机分边/红方先行”
+    const syncModeDescs = (v) => {
+      const mirror = v === 'mirrorOpen';
+      modeAiDesc.textContent = mirror ? '与 AI 对弈，随机分边，红方先行' : '与 AI 对弈，你先翻棋';
+      modePvpDesc.textContent = mirror ? '两人轮流操作，红方先行' : '两人轮流操作，先翻者执翻出的颜色';
+    };
     const syncVariantUI = (v) => {
       currentVariant = v;
       variantSeg.querySelectorAll('button[data-variant]').forEach((b) => {
@@ -200,6 +212,7 @@
         b.setAttribute('aria-pressed', String(on));
       });
       variantDesc.textContent = VARIANT_DESC[v] || VARIANT_DESC.classic;
+      syncModeDescs(v);
     };
     syncVariantUI(currentVariant); // 启动时统一初始状态
     variantSeg.addEventListener('click', (e) => {
@@ -212,13 +225,31 @@
     const modeModal = document.getElementById('mode-modal');
     const variantBadge = document.getElementById('variant-badge');
     const rulesFun = document.getElementById('rules-fun');
+    const rulesMirror = document.getElementById('rules-mirror');
+    const panelSpy = document.getElementById('panel-spy');
+    const panelSpyTitle = document.getElementById('panel-spy-title');
+    const mirrorHint = document.getElementById('mirror-hint');
     const applyModeUI = () => {
       const st = Junqi.main.getState();
       segWrap.style.display = (st && st.mode === 'pvp') ? 'none' : '';
       // 娱乐玩法：顶栏金标 + 规则弹窗附条；并把弹窗 seg 同步到当前实际玩法
-      const isFun = !!(st && st.variant === 'rankUp');
+      const isRankUp = !!(st && st.variant === 'rankUp');
+      const isMirror = !!(st && st.variant === 'mirrorOpen');
+      const isFun = isRankUp || isMirror;
       variantBadge.classList.toggle('hidden', !isFun);
-      rulesFun.classList.toggle('hidden', !isFun);
+      if (isFun) {
+        variantBadge.textContent = isMirror ? '娱乐·镜像明棋' : '娱乐·军衔升级';
+        variantBadge.title = isMirror
+          ? '当前玩法：娱乐·镜像明棋（全体明棋，无需翻棋）'
+          : '当前玩法：娱乐·军衔升级（吃子升军衔）';
+      }
+      rulesFun.classList.toggle('hidden', !isRankUp);
+      rulesMirror.classList.toggle('hidden', !isMirror);
+      // 明棋局没有暗子：透视分组让位给说明，只保留拔雷进度
+      panelSpy.classList.toggle('is-mirror', isMirror);
+      mirrorHint.classList.toggle('hidden', !isMirror);
+      panelSpyTitle.textContent = isMirror ? '战场信息' : '未翻透视';
+      panelSpy.setAttribute('aria-label', isMirror ? '战场信息：拔雷进度' : '记牌器：未翻棋子与拔雷进度');
       if (st && st.variant && st.variant !== currentVariant) syncVariantUI(st.variant);
     };
     const chooseMode = (m) => {

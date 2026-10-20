@@ -13,7 +13,7 @@
 
   let state = null;
   let mode = 'ai';        // 'ai'=人机 | 'pvp'=双人同屏；模式选择弹窗设定
-  let variant = C.VARIANTS.CLASSIC; // 玩法：'classic'=经典 | 'rankUp'=娱乐·军衔升级；弹窗设定
+  let variant = C.VARIANTS.CLASSIC; // 玩法：'classic'=经典 | 'rankUp'=军衔升级 | 'mirrorOpen'=镜像明棋；弹窗设定
   let difficulty = C.DIFFICULTY.MASTER; // 默认大师档（下拉框默认项与此一致）
   let aiTimer = null;
   // AI 思考 Worker（后台线程，思考时不冻屏）；不可用时（file:// 等）自动同步降级
@@ -69,6 +69,9 @@
     });
     UI.clearSelection();
     UI.render(state);
+    // 镜像明棋人机局随机分边：若人执蓝，红方 AI 需在开局自动走第一步。
+    // 经典/军衔升级开局 sidesAssigned=false，scheduleAI 内部直接 no-op，行为不变。
+    scheduleAI();
   }
 
   function setDifficulty(d) { difficulty = d; }

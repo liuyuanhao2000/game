@@ -844,3 +844,44 @@ test('ai: rankUp quiesce 展开吃子链后逐位还原（含 rank/captures）',
   assert.strictEqual(boardSig(st), sig, 'quiesce 后局面必须逐位一致（升级克隆不得残留）');
   assert.ok(q > 0, '红吃工兵后蓝无子可动应判胜势，实际 ' + q);
 });
+
+// ============ v1.4.0 镜像明棋：全明棋局面 AI 兼容 ============
+test('ai: mirrorOpen — 无暗子，remainingDistribution 归零且无 flip 动作', () => {
+  const st = S.createInitialState({ variant: 'mirrorOpen' });
+  const { rem, totalUnrevealed } = AI.remainingDistribution(st);
+  assert.strictEqual(totalUnrevealed, 0, '明棋局不应有暗子');
+  for (const k in rem) assert.strictEqual(rem[k], 0, '剩余分布应为 0: ' + k);
+  const acts = AI.enumerateActions(st, 'red');
+  assert.ok(acts.length > 0);
+  assert.ok(acts.every((a) => a.kind === 'move'), '不得枚举 flip');
+});
+
+test('ai: mirrorOpen 中/困难档返回合法走法、不篡改输入局面、快照一致', () => {
+  const st = S.createInitialState({ variant: 'mirrorOpen' });
+  const snap = JSON.parse(JSON.stringify(st));
+  const origRandom = Math.random;
+  const reseed = () => {
+    let a = 20261020;
+    Math.random = () => {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+  try {
+    for (const diff of [C.DIFFICULTY.MEDIUM, C.DIFFICULTY.HARD]) {
+      const sigBefore = boardSig(st);
+      reseed();
+      const aLive = AI.chooseMove(st, diff, 'red');
+      assert.strictEqual(boardSig(st), sigBefore, diff + ': chooseMove 不得篡改输入局面');
+      assert.ok(aLive && aLive.kind === 'move', diff + ': 明棋局应返回走子');
+      assert.ok(isLegal(aLive, st, 'red'), diff + ': 动作必须合法');
+      reseed();
+      const aSnap = AI.chooseMove(snap, diff, 'red');
+      assert.deepStrictEqual(aSnap, aLive, diff + ': 快照与活状态应产出相同动作');
+    }
+  } finally {
+    Math.random = origRandom;
+  }
+});
