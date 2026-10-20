@@ -21,8 +21,9 @@
 # - 打包本身不依赖 node_modules/electron/dist（packager 自行下载对应平台的 zip），
 #   只有本机 npm start 才需要它，用 --dev 补装
 # - android 需要 JDK 21 + Android SDK + android/keystore.properties（签名），
-#   环境搭建见 安卓构建指南.md；发新版时记得同步 android/app/build.gradle 的
-#   versionCode/versionName（不会自动跟随 package.json）
+#   环境搭建见 安卓构建指南.md；签名配置用 scripts/write-keystore-config.sh 生成
+# - android/app/build.gradle 的 versionCode/versionName 会自动跟随 package.json：
+#   versionName 不一致时 versionName 直接同步、versionCode +1（改动记得提交）
 
 set -e
 set -u
@@ -91,8 +92,58 @@ if [ "$build_android" -eq 1 ]; then
   fi
   if [ ! -f android/keystore.properties ]; then
     echo "错误：缺少 android/keystore.properties（签名配置，已 gitignore），" >&2
-    echo "      参照 android/keystore.properties.example 填写后重试" >&2
+    echo "      运行 scripts/write-keystore-config.sh 生成（默认复用已有配置，否则读 \$HOME/junqi-release.keystore）" >&2
     exit 1
+  fi
+  store_file=$(sed -n 's/^[[:space:]]*storeFile[[:space:]]*=[[:space:]]*//p' android/keystore.properties | tr -d '\r' | head -1)
+  if [ -z "$store_file" ]; then
+    echo "错误：android/keystore.properties 缺少 storeFile，请重新生成签名配置" >&2
+    exit 1
+  fi
+  # 与 Gradle 的 file() 一致：相对路径以 android/app/ 为基准（不能按仓库根目录判断）
+  case "$store_file" in
+    /*) ;;
+    *)  store_file="$PWD/android/app/$store_file" ;;
+  esac
+  if [ ! -f "$store_file" ]; then
+    echo "错误：keystore.properties 指向的 keystore 不存在：$store_file" >&2
+    echo "      重新运行 scripts/write-keystore-config.sh <keystore 路径>" >&2
+    exit 1
+  fi
+
+  # SDK 路径：local.properties（不入库）缺失时按 ANDROID_HOME → ~/android-sdk 补齐
+  if [ ! -f android/local.properties ]; then
+    sdk_dir="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/android-sdk}}"
+    if [ -d "$sdk_dir" ]; then
+      printf 'sdk.dir=%s\n' "$sdk_dir" > android/local.properties
+      echo "==> 已生成 android/local.properties（sdk.dir=$sdk_dir）"
+    else
+      echo "错误：找不到 Android SDK。安装后设置 ANDROID_HOME，或写 android/local.properties" >&2
+      echo "      见 安卓构建指南.md 第 0 节" >&2
+      exit 1
+    fi
+  fi
+
+  # versionCode/versionName 跟随 package.json（原来靠手工改，常忘）
+  gradle_file="android/app/build.gradle"
+  gradle_version=$(sed -n 's/^[[:space:]]*versionName "\(.*\)"/\1/p' "$gradle_file" | head -1)
+  if [ "$gradle_version" != "$APP_VERSION" ]; then
+    gradle_code=$(sed -n 's/^[[:space:]]*versionCode \([0-9][0-9]*\)/\1/p' "$gradle_file" | head -1)
+    if [ -z "$gradle_code" ]; then
+      echo "错误：无法从 $gradle_file 读取 versionCode" >&2
+      exit 1
+    fi
+    new_code=$((gradle_code + 1))
+    # 不用 sed -i：BSD/macOS 的 sed 不支持无后缀的 -i
+    tmp_file=$(mktemp)
+    sed \
+      -e "s/^\([[:space:]]*\)versionCode [0-9][0-9]*/\1versionCode $new_code/" \
+      -e "s/^\([[:space:]]*\)versionName \".*\"/\1versionName \"$APP_VERSION\"/" \
+      "$gradle_file" > "$tmp_file"
+    cat "$tmp_file" > "$gradle_file"   # 保留原文件权限/属主
+    rm -f "$tmp_file"
+    echo "==> 同步 build.gradle 版本：$gradle_version (code $gradle_code) -> $APP_VERSION (code $new_code)"
+    echo "    记得提交该改动"
   fi
   npm run stage:web
   node_modules/.bin/cap sync android
