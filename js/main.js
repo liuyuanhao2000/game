@@ -65,6 +65,7 @@
       status: document.getElementById('status'),
       mines: document.getElementById('mines'),
       lastmove: document.getElementById('lastmove'),
+      variant,
       onSelect: onCellClick,
     });
     UI.clearSelection();
@@ -104,7 +105,7 @@
     state = history.pop();
     state.onChange = () => UI.render(state); // JSON 快照无函数字段，重挂（同 start）
     clearSel(); // 选中高亮是旧局面瞬态，可能指向已复原的暗格
-    UI.rebuildTracker(); // 阵亡名册是只增 diff，复活棋子必须清缓存重建（ui.js）
+    UI.rebuildTracker(state.variant); // 阵亡名册是只增 diff，复活棋子必须清缓存重建（ui.js）
     UI.markLastMoveRendered(state); // 抑制恢复出的旧 lastMove 重播入场动画
     UI.render(state);
     SFX.play('undo');

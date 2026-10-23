@@ -14,12 +14,14 @@
     return R.enumerateActions(state, side);
   }
 
-  // 剩余未翻子分布：已知已翻出的子，从每方 25 子总集里扣除
+  // 剩余未翻子分布：已知已翻出的子，从每方 25 子总集里扣除。
+  // 构成随玩法变化（无限火力无军旗/工兵/地雷、炸弹 9 枚），不能直接读经典 PIECES 计数。
   function remainingDistribution(state) {
     // remaining[type][side] = 该 type+side 还剩多少未出现
+    const counts = C.pieceCounts(state.variant);
     const rem = {};
     for (const side of C.SIDES) {
-      for (const type in C.PIECES) rem[type + ':' + side] = C.PIECES[type].count;
+      for (const type in counts) rem[type + ':' + side] = counts[type];
     }
     let totalUnrevealed = 0;
     for (let i = 0; i < state.board.length; i++) {
@@ -27,12 +29,13 @@
       if (cell.piece && !cell.revealed) {
         totalUnrevealed++;
       } else if (cell.piece && cell.revealed) {
-        rem[cell.piece.type + ':' + cell.piece.side] -= 1;
+        const k = cell.piece.type + ':' + cell.piece.side;
+        if (k in rem) rem[k] -= 1; // 防御：非常规构成（测试/坏状态）不产生 NaN
       }
     }
     // 扣除已被吃/移除的子（它们既不在棋盘、也不是暗子）
     if (state.captured) {
-      for (const k in state.captured) rem[k] -= state.captured[k];
+      for (const k in state.captured) if (k in rem) rem[k] -= state.captured[k];
     }
     return { rem, totalUnrevealed };
   }

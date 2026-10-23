@@ -5,7 +5,7 @@
   const NS = (typeof window !== 'undefined') ? window : globalThis;
   NS.Junqi = NS.Junqi || {};
 
-  const VERSION = '1.4.0'; // 与 package.json 保持一致（tests/version.test.js 会校验）；界面版本号由此渲染
+  const VERSION = '1.5.0'; // 与 package.json 保持一致（tests/version.test.js 会校验）；界面版本号由此渲染
 
   const ROWS = 12;
   const COLS = 5;
@@ -40,11 +40,26 @@
   const DIFFICULTY = { EASY: 'easy', MEDIUM: 'medium', HARD: 'hard', MASTER: 'master' };
 
   // ---- 玩法（娱乐模式扩展位）----
-  // variant 与 mode('ai'|'pvp') 正交：经典模式规则恒定；娱乐模式目前有军衔升级与镜像明棋。
+  // variant 与 mode('ai'|'pvp') 正交：经典模式规则恒定；娱乐模式有军衔升级、镜像明棋与无限火力。
   // 娱乐·军衔升级：战斗后存活方（非特殊子）自动升一级军衔（司令封顶）；
   // 工兵走特殊路径：吃子（含排雷）后成为超级工兵，战力 = 1 + 吃子数，移动方式不变、保留排雷能力。
   // 娱乐·镜像明棋：开局随机一份布局并跨楚河镜像给双方，所有棋子明置，全局无翻棋。
-  const VARIANTS = { CLASSIC: 'classic', RANK_UP: 'rankUp', MIRROR_OPEN: 'mirrorOpen' };
+  // 娱乐·无限火力：军旗/工兵/地雷全部换成炸弹（每方 9 炸弹），消灭对方全部棋子即胜。
+  const VARIANTS = { CLASSIC: 'classic', RANK_UP: 'rankUp', MIRROR_OPEN: 'mirrorOpen', BOMB_FIRE: 'bombFire' };
+
+  // ---- 每方棋子构成（发牌 / AI 剩余分布 / 记牌器共用）----
+  // classic / rankUp / mirrorOpen 沿用 PIECES 表；bombFire 换成炸弹特化构成。
+  const BASE_COUNTS = {};
+  for (const t in PIECES) BASE_COUNTS[t] = PIECES[t].count;
+  // 无限火力：军旗 1 + 工兵 3 + 地雷 3（共 7 枚）并入炸弹 2 枚 → 9 炸弹；普通军衔子 16 枚。每方仍 25 子。
+  const BOMB_FIRE_COUNTS = {
+    commander: 1, general: 1, division: 2, brigade: 2,
+    regiment: 2, battalion: 2, company: 3, platoon: 3, bomb: 9,
+  };
+
+  function pieceCounts(variant) {
+    return variant === VARIANTS.BOMB_FIRE ? BOMB_FIRE_COUNTS : BASE_COUNTS;
+  }
 
   // 军衔阶梯：rank 数值 → 名称（工兵1 … 司令9）；升级/显示/AI 估值共用
   const RANK_MAX = 9; // 普通棋子升级封顶（司令不再升）
@@ -120,7 +135,8 @@
     VERSION, ROWS, COLS, CELL_COUNT,
     PIECES, PIECES_PER_SIDE, MINES_PER_SIDE, IMMOBILE,
     DIFFICULTY, STALE_ROUNDS, STALE_LIMIT,
-    VARIANTS, RANK_MAX, RANK_NAMES, SIDE_NAME, pieceName, promotionText,
+    VARIANTS, BASE_COUNTS, BOMB_FIRE_COUNTS, pieceCounts,
+    RANK_MAX, RANK_NAMES, SIDE_NAME, pieceName, promotionText,
     RIVER_COLS, RIVER_TOP_ROW, RIVER_BOT_ROW,
     PIECE_VALUE, RANK_VALUE, SIDES, opposite,
   };

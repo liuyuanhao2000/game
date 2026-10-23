@@ -71,7 +71,7 @@
     return e;
   }
 
-  function init({ board, status, mines, lastmove, onSelect: cb }) {
+  function init({ board, status, mines, lastmove, variant, onSelect: cb }) {
     statusEl = status; minesEl = mines; lastmoveEl = lastmove; onSelect = cb;
     // 在容器内创建 <svg>（容器本身可为 div）
     svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -79,8 +79,8 @@
     board.appendChild(svgEl);
     // 首次构建静态结构（棋盘骨架）
     buildSkeleton();
-    // 记牌器面板（重开时随 init 重建、计数归零）
-    buildTracker();
+    // 记牌器面板（重开时随 init 重建、计数归零）；棋子构成随玩法变化
+    buildTracker(variant || C.VARIANTS.CLASSIC);
   }
 
   function buildSkeleton() {
@@ -429,6 +429,16 @@
     }
   }
 
+  // 某方棋盘上现存棋子数（含未翻）；无限火力终局文案用
+  function sidePieceCount(state, side) {
+    let n = 0;
+    for (let i = 0; i < state.board.length; i++) {
+      const c = state.board[i];
+      if (c.piece && c.piece.side === side) n++;
+    }
+    return n;
+  }
+
   // 人机模式下人类的阵营；controllers 未定（首翻前）返回 null
   function humanSideOf(state) {
     const c = state.controllers || {};
@@ -470,9 +480,9 @@
     // 染色状态条
     statusEl.className = 'status' + (state.winner ? ' status-end' : (state.sidesAssigned && state.controllers[state.turn] === 'human' ? ' status-mine' : ''));
 
-    // 地雷拔除进度（拔满 3 才能吃对方军旗）
+    // 地雷拔除进度（拔满 3 才能吃对方军旗）；无限火力没有地雷/军旗，整行留空
     if (minesEl) {
-      if (!state.sidesAssigned || !state.minesLost) {
+      if (state.variant === C.VARIANTS.BOMB_FIRE || !state.sidesAssigned || !state.minesLost) {
         minesEl.textContent = '';
       } else {
         const ml = state.minesLost;
@@ -518,7 +528,16 @@
           const tEl = document.getElementById('gameover-title');
           const sEl = document.getElementById('gameover-sub');
           if (kind === 'draw') {
-            sEl.textContent = '连续 40 回合无吃子、无翻棋';
+            // 无限火力可能因「双方最后一子同归于尽」判和，与困局和棋文案区分
+            sEl.textContent = (state.variant === C.VARIANTS.BOMB_FIRE &&
+              sidePieceCount(state, 'red') === 0 && sidePieceCount(state, 'blue') === 0)
+              ? '双方同归于尽'
+              : '连续 40 回合无吃子、无翻棋';
+          } else if (state.variant === C.VARIANTS.BOMB_FIRE) {
+            // 无限火力：败方棋盘上已无棋子 → 全军覆没；否则只能是困毙
+            sEl.textContent = sidePieceCount(state, state.winner === 'red' ? 'blue' : 'red') === 0
+              ? '对方全军覆没'
+              : '对方无路可走';
           } else {
             const lm = state.lastMove;
             sEl.textContent = (lm && lm.battle && lm.battle.outcome === 'flag')
@@ -573,11 +592,12 @@
     return e;
   }
 
-  function buildTracker() {
+  function buildTracker(variant) {
     hiddenEls = { red: {}, blue: {} };
     lostEls = { red: null, blue: null };
     prevLost = { red: {}, blue: {} };
     trackerBuilt = true;
+    const counts = C.pieceCounts(variant);
     for (const side of C.SIDES) {
       const hBox = document.getElementById('hidden-' + side);
       const lBox = document.getElementById('lost-' + side);
@@ -586,13 +606,15 @@
       lBox.innerHTML = '';
       lostEls[side] = lBox;
       for (const t in C.PIECES) {
+        const n = counts[t] || 0;
+        if (!n) continue; // 该玩法不存在此棋子（无限火力无军旗/工兵/地雷）→ 不出 chip
         const chip = hel('span', 'chip chip-hidden side-' + side, hBox);
         const disc = hel('span', 'chip-disc', chip);
         disc.textContent = C.PIECES[t].name;
         chip.title = (side === 'red' ? '红方' : '蓝方') + C.PIECES[t].name + '（未翻 · 透视）';
         const cnt = hel('span', 'chip-count', chip);
-        cnt.textContent = '×' + C.PIECES[t].count;
-        hiddenEls[side][t] = { chip, cnt, prev: C.PIECES[t].count };
+        cnt.textContent = '×' + n;
+        hiddenEls[side][t] = { chip, cnt, prev: n };
       }
       hel('span', 'lost-empty', lBox).textContent = side === 'red' ? '红方暂无阵亡' : '蓝方暂无阵亡';
     }
@@ -601,7 +623,7 @@
   // 悔棋恢复专用：阵亡名册是 append-only diff（假设 state.captured 局内只增），
   // 悔棋复活棋子后 prevLost 高水位会让再次被吃的同名子 delta≤0 → chip 永久缺失。
   // buildTracker 幂等且重置全部缓存（prevLost / hiddenEls.prev），清重建即可。
-  function rebuildTracker() { buildTracker(); }
+  function rebuildTracker(variant) { buildTracker(variant || C.VARIANTS.CLASSIC); }
 
   // 悔棋恢复专用：把恢复出的 lastMove 标记为"已播过动画"。render/maybeFx 均按
   // 引用比较 renderedLastMove，快照还原的是新对象，不标记会重播一次入场动画。
@@ -614,6 +636,7 @@
       // 未翻透视：计数刷新 / ×0 灰显 / 变化弹跳
       for (const t in C.PIECES) {
         const e = hiddenEls[side][t];
+        if (!e) continue; // 该玩法不存在的棋子（buildTracker 已跳过）
         const n = data.hidden[side][t];
         if (n !== e.prev) {
           e.prev = n;
@@ -670,8 +693,9 @@
   function trackerData(state) {
     const hidden = { red: {}, blue: {} };
     const revealedCnt = { red: {}, blue: {} };
+    const counts = C.pieceCounts(state.variant);
     for (const side of C.SIDES) {
-      for (const t in C.PIECES) { hidden[side][t] = C.PIECES[t].count; revealedCnt[side][t] = 0; }
+      for (const t in C.PIECES) { hidden[side][t] = counts[t] || 0; revealedCnt[side][t] = 0; }
     }
     for (let i = 0; i < state.board.length; i++) {
       const c = state.board[i];

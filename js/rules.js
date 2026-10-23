@@ -170,6 +170,19 @@
   // 返回 null | 'red' | 'blue' | 'draw'（不覆盖已设的旗被吃胜）
   function checkWinner(state) {
     if (state.winner) return state.winner;
+    // 无限火力：消灭对方全部棋子即胜（双方同归于尽则和）。
+    // 先于"无路可走"判定——全军覆没时必然也无合法行动，不能被误判成普通困毙。
+    if (state.variant === C.VARIANTS.BOMB_FIRE) {
+      let red = 0, blue = 0;
+      for (let i = 0; i < state.board.length; i++) {
+        const c = state.board[i];
+        if (!c.piece) continue;
+        if (c.piece.side === 'red') red++; else blue++;
+      }
+      if (!red && !blue) return 'draw';
+      if (!red) return 'blue';
+      if (!blue) return 'red';
+    }
     // 当前轮到的一方无合法行动 → 对方胜（优先于和棋：无路可走即负）
     const mover = state.turn;
     if (!hasAnyLegalMove(state, mover)) {

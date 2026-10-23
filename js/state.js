@@ -8,12 +8,14 @@
   const B = NS.Junqi.board;
   const R = NS.Junqi.rules;
 
-  // 生成 50 子（每方 25）并随机铺在 60 格中的 50 格，背面朝下
-  function buildPieces() {
+  // 生成每方 25 子（共 50）并随机铺在 60 格中的 50 格，背面朝下。
+  // 棋子构成随玩法而定：无限火力把军旗/工兵/地雷换成炸弹（见 constants.pieceCounts）。
+  function buildPieces(variant) {
+    const counts = C.pieceCounts(variant);
     const list = [];
     for (const side of C.SIDES) {
-      for (const type in C.PIECES) {
-        const n = C.PIECES[type].count;
+      for (const type in counts) {
+        const n = counts[type];
         for (let i = 0; i < n; i++) list.push({ type, rank: C.PIECES[type].rank, side });
       }
     }
@@ -31,7 +33,7 @@
   // 镜像明棋发牌：跨楚河镜像对 (r,c) ↔ (11-r,c) 共 25 对（行营恒空）。
   // 每对随机选一格给红方，蓝方占镜像格；红方 25 枚棋子洗牌后落位，镜像格放同类型蓝子。
   // 结果：50 个非行营格全部有子（25 红 + 25 蓝），全部明置、无暗子。
-  function fillMirrorBoard(board) {
+  function fillMirrorBoard(board, variant) {
     const redSlots = [];
     for (let i = 0; i < C.CELL_COUNT; i++) {
       if (B.terrainAt(i) === 'camp') continue;
@@ -39,7 +41,7 @@
       if (i >= m) continue; // 每个镜像对只处理一次（上半行索引恒小于下半镜像行）
       redSlots.push(Math.random() < 0.5 ? i : m);
     }
-    const redPieces = shuffle(buildPieces().filter((p) => p.side === 'red'));
+    const redPieces = shuffle(buildPieces(variant).filter((p) => p.side === 'red'));
     for (let k = 0; k < redSlots.length; k++) {
       const i = redSlots[k];
       const m = B.mirrorIndex(i);
@@ -58,7 +60,7 @@
     if (variant === C.VARIANTS.MIRROR_OPEN) {
       // 明棋镜像：全体已翻，无首翻定边；红方恒先行。
       // 人机模式随机分边（若人执蓝，AI 红方在 main.start 后自动走第一步）。
-      fillMirrorBoard(board);
+      fillMirrorBoard(board, variant);
       turn = 'red';
       sidesAssigned = true;
       if (mode === 'pvp') {
@@ -73,7 +75,7 @@
       const nonCampSlots = shuffle(
         [...Array(C.CELL_COUNT).keys()].filter((i) => B.terrainAt(i) !== 'camp')
       );
-      const pieces = shuffle(buildPieces());
+      const pieces = shuffle(buildPieces(variant));
       for (let i = 0; i < pieces.length; i++) {
         board[nonCampSlots[i]] = { piece: pieces[i], revealed: false };
       }

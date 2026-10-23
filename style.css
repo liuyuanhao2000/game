@@ -403,9 +403,9 @@ body {
 /* 模式选择弹窗 */
 .mode-content { text-align: center; }
 .variant-row { display: flex; margin: 12px 0 2px; }
-/* 三段玩法选择：窄屏允许换行，避免 7 字标签溢出 */
+/* 四段玩法选择：窄屏换行成 2×2，避免 7 字标签溢出 */
 .seg-variant { flex-wrap: wrap; }
-.seg-variant button { flex: 1 1 30%; min-width: 92px; font-size: 12px; }
+.seg-variant button { flex: 1 1 22%; min-width: 92px; font-size: 12px; }
 .variant-desc {
   font-size: 12px; color: var(--muted); line-height: 1.6;
   margin: 6px auto 0; max-width: 34em; text-align: left; min-height: 2.6em;
@@ -418,6 +418,8 @@ body {
 }
 .mirror-hint.hidden { display: none; }
 #panel-spy.is-mirror .hidden-group { display: none; }
+/* 无限火力：没有地雷/军旗，拔雷进度条无意义 */
+#panel-spy.is-bomb .mine-meter { display: none; }
 .mode-buttons { display: flex; gap: 12px; margin: 14px 0 6px; flex-wrap: wrap; }
 .mode-btn {
   flex: 1 1 150px; display: flex; flex-direction: column; gap: 6px; align-items: center;
